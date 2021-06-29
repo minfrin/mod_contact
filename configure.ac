@@ -1,12 +1,12 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_PREREQ(2.61)
-AC_INIT(mod_contact, 1.0.0, minfrin@sharp.fm)
+AC_PREREQ([2.71])
+AC_INIT([mod_contact],[1.0.0],[minfrin@sharp.fm])
 AM_INIT_AUTOMAKE([dist-bzip2])
 AC_CONFIG_FILES([Makefile mod_contact.spec])
 AC_CONFIG_SRCDIR([mod_contact.c])
-AC_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS([config.h])
 
 # Checks for programs.
 AC_PROG_CC
