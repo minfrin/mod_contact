@@ -24,6 +24,7 @@
  *
  */
 
+#include <apr_encode.h>
 #include <apr_hash.h>
 #include <apr_lib.h>
 #include <apr_strings.h>
@@ -173,9 +174,12 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
                 if (!strncmp(str + off, boundary, leftover)) {
 
                     if (off) {
-                        apr_bucket_split(e, off);
+
+                    	apr_bucket_split(e, off);
                         APR_BUCKET_REMOVE(e);
                         APR_BRIGADE_INSERT_TAIL(bbOut, e);
+
+                        e = APR_BRIGADE_FIRST(bbIn);
                     }
 
                     outbytes += off;
@@ -211,9 +215,12 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
                 if (!strncmp(str + off, boundary, len)) {
 
                     if (off) {
-                        apr_bucket_split(e, off);
+
+                    	apr_bucket_split(e, off);
                         APR_BUCKET_REMOVE(e);
                         APR_BRIGADE_INSERT_TAIL(bbOut, e);
+
+                        e = APR_BRIGADE_FIRST(bbIn);
                     }
 
                     inbytes -= off;
@@ -242,7 +249,7 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
          * one byte and continue round to try again.
          */
 skip:
-
+// ????
         for (next = APR_BUCKET_NEXT(e);
                 inbytes < boundary_len && next != APR_BRIGADE_SENTINEL(bbIn);
                 next = APR_BUCKET_NEXT(next)) {
@@ -269,9 +276,11 @@ skip:
                 /* a match! remove the boundary and return */
                 apr_bucket_split(next, off);
 
-                for (prev = next;
-                        prev != APR_BRIGADE_SENTINEL(bbIn);
-                        prev = APR_BUCKET_PREV(prev)) {
+                e = APR_BUCKET_NEXT(next);
+
+                for (prev = APR_BRIGADE_FIRST(bbIn);
+                        prev != e;
+                        prev = APR_BRIGADE_FIRST(bbIn)) {
 
                     apr_bucket_delete(prev);
 
@@ -288,9 +297,11 @@ skip:
                 }
 
                 /* a match! remove the boundary and return */
-                for (prev = next;
-                        prev != APR_BRIGADE_SENTINEL(bbIn);
-                        prev = APR_BUCKET_PREV(prev)) {
+                e = APR_BUCKET_NEXT(next);
+
+                for (prev = APR_BRIGADE_FIRST(bbIn);
+                        prev != e;
+                        prev = APR_BRIGADE_FIRST(bbIn)) {
 
                     apr_bucket_delete(prev);
 
@@ -600,6 +611,19 @@ typedef struct part_t {
     const char *dsp_name;
 } part_t;
 
+static void multipart_ref(multipart_t *mp)
+{
+	mp->refcount++;
+}
+
+static void multipart_unref(multipart_t *mp)
+{
+	mp->refcount--;
+    if (!mp->refcount) {
+        apr_pool_destroy(mp->pool);
+    }
+}
+
 /**
  * The MULTIPART bucket type.  This bucket represents the metadata of and start
  * of a part in a multipart message. If this bucket is still available when the
@@ -659,7 +683,7 @@ AP_DECLARE(apr_bucket *) ap_bucket_multipart_make(apr_bucket *b,
     h->multipart = multipart;
     h->part = part;
 
-    multipart->refcount++;
+    multipart_ref(multipart);
 
     b = apr_bucket_shared_make(b, h, 0, 0);
     b->type = &ap_bucket_type_multipart;
@@ -688,10 +712,7 @@ static void multipart_bucket_destroy(void *data)
             h->part = NULL;
         }
         if (h->multipart) {
-            h->multipart->refcount--;
-            if (!h->multipart->refcount) {
-                apr_pool_destroy(h->multipart->pool);
-            }
+        	multipart_unref(h->multipart);
             h->multipart = NULL;
         }
         apr_bucket_free(h);
@@ -738,14 +759,20 @@ typedef struct multipart_ctx_t
 
 static apr_status_t multipart_cleanup(void *data)
 {
-    apr_array_header_t *multiparts = data;
+	multipart_ctx *ctx = data;
 
-    apr_array_pop(multiparts);
+    apr_array_pop(ctx->multiparts);
 
+    if (ctx->multiparts->nelts) {
+    	ctx->multipart = APR_ARRAY_IDX(ctx->multiparts, ctx->multiparts->nelts - 1, multipart_t *);
+    }
+    else {
+    	ctx->multipart = NULL;
+    }
     return APR_SUCCESS;
 }
 
-static multipart_t *multipart_push(apr_array_header_t *multiparts,
+static multipart_t *multipart_push(multipart_ctx *ctx,
         const char *subtype, const char *boundary)
 {
     apr_pool_t *pool;
@@ -753,20 +780,22 @@ static multipart_t *multipart_push(apr_array_header_t *multiparts,
     multipart_t **pmp;
     multipart_t *mp;
 
-    apr_pool_create(&pool, multiparts->pool);
+    apr_pool_create(&pool, ctx->multiparts->pool);
 
     mp = apr_pcalloc(pool, sizeof(multipart_t));
     mp->pool = pool;
     mp->subtype = apr_pstrdup(pool, subtype);
     mp->boundary = apr_pstrdup(pool, boundary);
     mp->boundary_len = strlen(boundary);
-    mp->level = multiparts->nelts;
+    mp->level = ctx->multiparts->nelts;
 
-    pmp = apr_array_push(multiparts);
+    pmp = apr_array_push(ctx->multiparts);
     *pmp = mp;
 
-    apr_pool_cleanup_register(pool, multiparts, multipart_cleanup,
+    apr_pool_cleanup_register(pool, ctx, multipart_cleanup,
                               apr_pool_cleanup_null);
+
+    ctx->multipart = mp;
 
     return mp;
 }
@@ -883,8 +912,10 @@ static apr_status_t multipart_in_filter(ap_filter_t *f,
         ctx->out = apr_brigade_create(r->pool, f->c->bucket_alloc);
 
         ctx->multiparts = apr_array_make(r->pool, 1, sizeof(ap_bucket_multipart *));
-        ctx->multipart = multipart_push(ctx->multiparts, type + 10, boundary);
 
+        multipart_push(ctx, type + 10, boundary);
+
+        multipart_ref(ctx->multipart);
     }
 
     /* if our buffer is empty, read off the network until the buffer is full */
@@ -1042,7 +1073,7 @@ static apr_status_t multipart_in_filter(ap_filter_t *f,
                              ctx->part->headers = apr_table_make(pool, 2);
 
                              /* drop into header */
-                                ctx->state = MULTIPART_HEADER;
+                             ctx->state = MULTIPART_HEADER;
 
                          }
 
@@ -1121,7 +1152,7 @@ static apr_status_t multipart_in_filter(ap_filter_t *f,
                          ctx->part = NULL;
 
                          apr_brigade_cleanup(ctx->filtered);
-                          ctx->state = MULTIPART_BODY;
+                         ctx->state = MULTIPART_BODY;
                      }
 
                  }
@@ -1159,6 +1190,8 @@ static apr_status_t multipart_in_filter(ap_filter_t *f,
              }
              /* no break */
              case MULTIPART_EPILOG: {
+
+                 multipart_unref(ctx->multipart);
 
                  while (!APR_BRIGADE_EMPTY(ctx->in)) {
                      e = APR_BRIGADE_FIRST(ctx->in);
@@ -1638,10 +1671,6 @@ AP_DECLARE_DATA const apr_bucket_type_t ap_bucket_type_contact = {
 
 
 
-
-
-
-
 typedef enum contact_state_e {
     CONTACT_NONE,
     CONTACT_HEADER,
@@ -1659,19 +1688,81 @@ typedef struct contact_ctx
     apr_table_t *headers;
     const char *header;
     const char *dsp;
-//    apr_bucket *m;
-//    unsigned char *out;
-//    apr_off_t remaining;
-//    apr_off_t written;
-//    apr_size_t osize;
+    char base64[57];
+    int base64_off;
     int seen_eos:1;
-//    int in_headers:1;
     int in_header:1;
     int in_mime:1;
-//    int in_body:1;
+    int in_base64:1;
     int ignore:1;
     contact_state_e state:2;
 } contact_ctx;
+
+static apr_status_t contact_base64(contact_ctx *ctx, apr_bucket_brigade *out,
+		apr_bucket *e, int close)
+{
+
+	do {
+
+		const char *str;
+		apr_size_t len = sizeof(ctx->base64) - ctx->base64_off;
+
+		if (!len || close) {
+
+			char buf[79];
+			apr_size_t buf_len;
+
+			apr_encode_base64(buf, ctx->base64, ctx->base64_off, APR_ENCODE_NONE,
+					&buf_len);
+
+			ctx->base64_off = 0;
+			len = sizeof(ctx->base64);
+
+			apr_brigade_write(out, NULL, NULL, buf, buf_len);
+
+			apr_brigade_puts(out, NULL, NULL, CRLF);
+		}
+
+		if (e) {
+
+			if (APR_BUCKET_IS_METADATA(e)) {
+				APR_BUCKET_REMOVE(e);
+				APR_BRIGADE_INSERT_TAIL(out, e);
+
+				return APR_SUCCESS;
+			}
+
+			else {
+				apr_size_t l;
+
+				apr_bucket_read(e, &str, &l, APR_BLOCK_READ);
+
+				if (l > len) {
+					apr_bucket *next;
+
+					memcpy(ctx->base64 + ctx->base64_off, str, len);
+					ctx->base64_off += len;
+
+					apr_bucket_split(e, len);
+					next = APR_BUCKET_NEXT(e);
+					apr_bucket_delete(e);
+					e = next;
+				}
+				else {
+					memcpy(ctx->base64 + ctx->base64_off, str, l);
+					ctx->base64_off += l;
+
+					apr_bucket_delete(e);
+					e = NULL;
+				}
+
+			}
+		}
+
+	} while (e);
+
+	return APR_SUCCESS;
+}
 
 static int init_contact(ap_filter_t * f)
 {
@@ -1772,6 +1863,12 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     ctx->contact = NULL;
                 }
 
+                /* close off base64 */
+                if (ctx->in_base64) {
+                	contact_base64(ctx, ctx->out, NULL, 1);
+                    ctx->in_base64 = 0;
+                }
+
                 /* write out mime end if needed */
                 if (ctx->in_mime) {
                     apr_brigade_printf(ctx->out, NULL, NULL,
@@ -1809,6 +1906,11 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     ctx->in_header = 0;
                 }
 
+                if (ctx->in_base64) {
+                    contact_base64(ctx, ctx->out, NULL, 1);
+                    ctx->in_base64 = 0;
+                }
+
                 if (strcasecmp(h->multipart->subtype, "form-data")) {
                     /* not form-data - skip */
                 }
@@ -1821,7 +1923,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                 else if ((ctx->state == CONTACT_NONE ||
                         ctx->state == CONTACT_HEADER)
                         && h->part->dsp_name
-                        && !strcmp(h->part->dsp_name, "content-header-to")) {
+                        && !strcmp(h->part->dsp_name, "contact-header-to")) {
                     ctx->header = "To";
                     ctx->state = CONTACT_HEADER;
                 }
@@ -1830,7 +1932,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                 else if ((ctx->state == CONTACT_NONE ||
                         ctx->state == CONTACT_HEADER)
                         && h->part->dsp_name
-                        && !strcmp(h->part->dsp_name, "content-header-from")) {
+                        && !strcmp(h->part->dsp_name, "contact-header-from")) {
                     ctx->header = "From";
                     ctx->state = CONTACT_HEADER;
                 }
@@ -1839,7 +1941,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                 else if ((ctx->state == CONTACT_NONE
                         || ctx->state == CONTACT_HEADER)
                         && h->part->dsp_name
-                        && !strcmp(h->part->dsp_name, "content-header-subject")) {
+                        && !strcmp(h->part->dsp_name, "contact-header-subject")) {
                     ctx->header = "Subject";
                     ctx->state = CONTACT_HEADER;
                 }
@@ -1849,7 +1951,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         || ctx->state == CONTACT_BODY)
                         && h->part->dsp_name
                         && !strncmp(h->part->dsp_name,
-                                "content-body-", 13)) {
+                                "contact-body-", 13)) {
 
                     /* send contact bucket if unsent */
                     if (ctx->contact) {
@@ -1869,7 +1971,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     apr_brigade_printf(ctx->out, NULL, NULL,
                             "%s:" CRLF, h->part->dsp_name + 13);
 
-//                    ctx->in_body = 1;
+//                    ctx->in_base64 = 1;
 
                     ctx->state = CONTACT_BODY;
                 }
@@ -1880,9 +1982,9 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         || ctx->state == CONTACT_ATTACHMENT)
                         && h->part->dsp_name
                         && (!strncmp(h->part->dsp_name,
-                                "content-attachment-", 19)
+                                "contact-attachment-", 19)
                                 || !strncmp(h->part->dsp_name,
-                                        "content-inline-", 15))) {
+                                        "contact-inline-", 15))) {
 //                    ctx->dsp = h->part->dsp_name + 19;
 
                     /* send contact bucket if unsent */
@@ -1943,9 +2045,11 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     }
 
                     apr_brigade_puts(ctx->out, NULL, NULL,
-                            CRLF);
+                    		"Content-Transfer-Encoding: base64" CRLF CRLF);
 
                     ctx->in_mime = 1;
+
+                    ctx->in_base64 = 1;
 
                     ctx->state = CONTACT_ATTACHMENT;
                 }
@@ -2001,7 +2105,10 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
             }
 
             if (ctx->state == CONTACT_BODY) {
-                APR_BUCKET_REMOVE(e);
+
+// fixme make same as attachment
+
+            	APR_BUCKET_REMOVE(e);
                 APR_BRIGADE_INSERT_TAIL(ctx->out, e);
                 continue;
             }
@@ -2016,8 +2123,8 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     return rv;
                 }
 
-                APR_BUCKET_REMOVE(e);
-                APR_BRIGADE_INSERT_TAIL(ctx->out, e);
+                contact_base64(ctx, ctx->out, e, 0);
+
                 continue;
             }
 
