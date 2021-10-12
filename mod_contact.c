@@ -1734,8 +1734,13 @@ static apr_status_t contact_base64(contact_ctx *ctx, apr_bucket_brigade *out,
 
 			else {
 				apr_size_t l;
+				apr_status_t rv;
 
-				apr_bucket_read(e, &str, &l, APR_BLOCK_READ);
+				rv = apr_bucket_read(e, &str, &l, APR_BLOCK_READ);
+
+				if (rv != APR_SUCCESS) {
+					return rv;
+				}
 
 				if (l > len) {
 					apr_bucket *next;
@@ -1963,15 +1968,19 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     if (ctx->state == CONTACT_NONE
                             || ctx->state == CONTACT_HEADER) {
                         apr_brigade_printf(ctx->out, NULL, NULL,
-                                CRLF "--%s" CRLF CRLF, ctx->boundary);
+                                CRLF "--%s" CRLF, ctx->boundary);
+                        apr_brigade_puts(ctx->out, NULL, NULL,
+                        		"Content-Transfer-Encoding: base64" CRLF CRLF);
                         ctx->in_mime = 1;
                     }
 
                     /* write out body start */
-                    apr_brigade_printf(ctx->out, NULL, NULL,
+                    apr_brigade_printf(ctx->filtered, NULL, NULL,
                             "%s:" CRLF, h->part->dsp_name + 13);
 
-//                    ctx->in_base64 = 1;
+                    APR_BRIGADE_PREPEND(ctx->in, ctx->filtered);
+
+                    ctx->in_base64 = 1;
 
                     ctx->state = CONTACT_BODY;
                 }
@@ -2104,19 +2113,9 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
 
             }
 
-            if (ctx->state == CONTACT_BODY) {
+            if (ctx->state == CONTACT_BODY || ctx->state == CONTACT_ATTACHMENT) {
 
-// fixme make same as attachment
-
-            	APR_BUCKET_REMOVE(e);
-                APR_BRIGADE_INSERT_TAIL(ctx->out, e);
-                continue;
-            }
-
-            if (ctx->state == CONTACT_ATTACHMENT) {
-
-                /* we convert attachments to base64, do this here */
-// fixme
+                /* we convert bodies and attachments to base64, do this here */
                 rv = apr_bucket_read(e, &str, &len, block);
 
                 if (rv != APR_SUCCESS) {
