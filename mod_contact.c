@@ -2128,6 +2128,24 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     ctx->state = CONTACT_HEADER;
                 }
 
+                /* the sender address */
+                else if ((ctx->state == CONTACT_NONE ||
+                        ctx->state == CONTACT_HEADER)
+                        && h->part->dsp_name
+                        && !strcmp(h->part->dsp_name, "contact-header-sender")) {
+                    ctx->header = "Sender";
+                    ctx->state = CONTACT_HEADER;
+                }
+
+                /* the replyto address */
+                else if ((ctx->state == CONTACT_NONE ||
+                        ctx->state == CONTACT_HEADER)
+                        && h->part->dsp_name
+                        && !strcmp(h->part->dsp_name, "contact-header-replyto")) {
+                    ctx->header = "Reply-To";
+                    ctx->state = CONTACT_HEADER;
+                }
+
                 /* the subject address */
                 else if ((ctx->state == CONTACT_NONE
                         || ctx->state == CONTACT_HEADER)
