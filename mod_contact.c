@@ -54,18 +54,18 @@ typedef struct
     int command_set;
     apr_array_header_t *args;
     int args_set;
-    apr_array_header_t *addresses;
-    const char *to;
+    ap_expr_info_t *to;
     int to_set;
-    const char *from;
+    ap_expr_info_t *to_match;
+    int to_match_set;
+    ap_expr_info_t *from;
     int from_set;
-    apr_hash_t *fields;
-    const char *message;
-    int message_set;
-    const char *file;
-    int file_set;
+    ap_expr_info_t *from_match;
+    int from_match_set;
     ap_expr_info_t *sender;
     int sender_set;
+    ap_expr_info_t *replyto;
+    int replyto_set;
 } contact_config_rec;
 
 /**
@@ -551,6 +551,7 @@ static const char *ap_header_parse(apr_pool_t *p, const char *header, ...)
     return h;
 }
 
+#if 0
 static const char *ap_escape_header_extension(apr_pool_t *p, const char *header)
 {
     /**
@@ -564,6 +565,7 @@ static const char *ap_escape_header_extension(apr_pool_t *p, const char *header)
 
     return header;
 }
+#endif
 
 typedef struct multipart_t {
     /** The pool for this part */
@@ -1265,9 +1267,12 @@ static void send_close(request_rec *r, apr_bucket_brigade *bb, int res,
     conn_rec *c = r->connection;
     apr_bucket *e;
 
+    const char *error = apr_table_get(r->notes, "error-notes");
+
     apr_brigade_printf(bb, NULL, NULL, "</form><code>%d</code>"
             "<status>%s</status><message>%s</message></contact>", res,
-            ap_get_status_line(res), apr_pescape_entity(r->pool, message, 0));
+            ap_get_status_line(res),
+            apr_pescape_entity(r->pool, error ? error : message, 0));
 
     e = apr_bucket_eos_create(c->bucket_alloc);
     APR_BRIGADE_INSERT_TAIL(bb, e);
@@ -1302,8 +1307,6 @@ static void *create_contact_dir_config(apr_pool_t *p, char *d)
 
     conf->command = DEFAULT_COMMAND;
     conf->args = apr_array_make(p, 8, sizeof(const char * const *));
-    conf->addresses = apr_array_make(p, 8, sizeof(const char * const *));
-    conf->fields = apr_hash_make(p);
 
     array = apr_array_push(conf->args);
 
@@ -1324,21 +1327,21 @@ static void *merge_contact_dir_config(apr_pool_t *p, void *basev, void *addv)
     new->args = (add->args_set == 0) ? base->args
             : add->args;
     new->args_set = add->args_set || base->args_set;
-    new->addresses = apr_array_append(p, add->addresses, base->addresses);
     new->to = (add->to_set == 0) ? base->to : add->to;
     new->to_set = add->to_set || base->to_set;
+    new->to_match = (add->to_match_set == 0) ? base->to_match : add->to_match;
+    new->to_match_set = add->to_match_set || base->to_match_set;
     new->from = (add->from_set == 0) ? base->from
             : add->from;
     new->from_set = add->from_set || base->from_set;
-    new->message = (add->message_set == 0) ? base->message
-            : add->message;
-    new->message_set = add->message_set || base->message_set;
-    new->file = (add->file_set == 0) ? base->file
-            : add->file;
-    new->file_set = add->file_set || base->file_set;
+    new->from_match = (add->from_match_set == 0) ? base->from_match : add->from_match;
+    new->from_match_set = add->from_match_set || base->from_match_set;
     new->sender = (add->sender_set == 0) ? base->sender
             : add->sender;
     new->sender_set = add->sender_set || base->sender_set;
+    new->replyto = (add->replyto_set == 0) ? base->replyto
+            : add->replyto;
+    new->replyto_set = add->replyto_set || base->replyto_set;
 
     return new;
 }
@@ -1365,22 +1368,36 @@ static const char *set_args(cmd_parms *cmd, void *dconf, const char *arg)
     return NULL;
 }
 
-static const char *set_addresses(cmd_parms *cmd, void *dconf, const char *arg)
+static const char *set_to(cmd_parms *cmd, void *dconf, const char *arg)
 {
     contact_config_rec *conf = dconf;
-    const char **array = apr_array_push(conf->addresses);
+    const char *expr_err = NULL;
 
-    *array = arg;
+    conf->to = ap_expr_parse_cmd(cmd, arg, AP_EXPR_FLAG_STRING_RESULT,
+            &expr_err, NULL);;
+    conf->to_set = 1;
+
+    if (expr_err) {
+        return apr_pstrcat(cmd->temp_pool, "Cannot parse expression '",
+                arg, "': ", expr_err, NULL);
+    }
 
     return NULL;
 }
 
-static const char *set_to(cmd_parms *cmd, void *dconf, const char *arg)
+static const char *set_to_match(cmd_parms *cmd, void *dconf, const char *arg)
 {
     contact_config_rec *conf = dconf;
+    const char *expr_err = NULL;
 
-    conf->to = arg;
-    conf->to_set = 1;
+    conf->to_match = ap_expr_parse_cmd(cmd, arg, AP_EXPR_FLAG_RESTRICTED,
+            &expr_err, NULL);;
+    conf->to_match_set = 1;
+
+    if (expr_err) {
+        return apr_pstrcat(cmd->temp_pool, "Cannot parse expression '",
+                arg, "': ", expr_err, NULL);
+    }
 
     return NULL;
 }
@@ -1388,43 +1405,33 @@ static const char *set_to(cmd_parms *cmd, void *dconf, const char *arg)
 static const char *set_from(cmd_parms *cmd, void *dconf, const char *arg)
 {
     contact_config_rec *conf = dconf;
+    const char *expr_err = NULL;
 
-    conf->from = arg;
+    conf->from = ap_expr_parse_cmd(cmd, arg, AP_EXPR_FLAG_STRING_RESULT,
+            &expr_err, NULL);;
     conf->from_set = 1;
 
-    return NULL;
-}
-
-static const char *set_field(cmd_parms *cmd, void *dconf, const char *arg1,
-        const char *arg2)
-{
-    contact_config_rec *conf = dconf;
-
-    if (!arg2) {
-        arg2 = arg1;
+    if (expr_err) {
+        return apr_pstrcat(cmd->temp_pool, "Cannot parse expression '",
+                arg, "': ", expr_err, NULL);
     }
 
-    apr_hash_set(conf->fields, arg1, APR_HASH_KEY_STRING, arg2);
-
     return NULL;
 }
 
-static const char *set_message(cmd_parms *cmd, void *dconf, const char *arg)
+static const char *set_from_match(cmd_parms *cmd, void *dconf, const char *arg)
 {
     contact_config_rec *conf = dconf;
+    const char *expr_err = NULL;
 
-    conf->message = arg;
-    conf->message_set = 1;
+    conf->from_match = ap_expr_parse_cmd(cmd, arg, AP_EXPR_FLAG_RESTRICTED,
+            &expr_err, NULL);;
+    conf->from_match_set = 1;
 
-    return NULL;
-}
-
-static const char *set_file(cmd_parms *cmd, void *dconf, const char *arg)
-{
-    contact_config_rec *conf = dconf;
-
-    conf->file = arg;
-    conf->file_set = 1;
+    if (expr_err) {
+        return apr_pstrcat(cmd->temp_pool, "Cannot parse expression '",
+                arg, "': ", expr_err, NULL);
+    }
 
     return NULL;
 }
@@ -1438,6 +1445,28 @@ static const char *set_sender(cmd_parms *cmd, void *dconf, const char *arg)
             &expr_err, NULL);;
     conf->sender_set = 1;
 
+    if (expr_err) {
+        return apr_pstrcat(cmd->temp_pool, "Cannot parse expression '",
+                arg, "': ", expr_err, NULL);
+    }
+
+    return NULL;
+}
+
+static const char *set_replyto(cmd_parms *cmd, void *dconf, const char *arg)
+{
+    contact_config_rec *conf = dconf;
+    const char *expr_err = NULL;
+
+    conf->replyto = ap_expr_parse_cmd(cmd, arg, AP_EXPR_FLAG_STRING_RESULT,
+            &expr_err, NULL);;
+    conf->replyto_set = 1;
+
+    if (expr_err) {
+        return apr_pstrcat(cmd->temp_pool, "Cannot parse expression '",
+                arg, "': ", expr_err, NULL);
+    }
+
     return NULL;
 }
 
@@ -1449,27 +1478,24 @@ AP_INIT_TAKE1("ContactCommand",
 AP_INIT_ITERATE(
         "ContactArguments", set_args, NULL, RSRC_CONF | ACCESS_CONF,
         "Set to arguments to pass to the sendmail binary."),
-AP_INIT_ITERATE(
-        "ContactAddresses", set_addresses, NULL, RSRC_CONF | ACCESS_CONF,
-        "Set to valid sender email addresses that will be accepted."),
 AP_INIT_TAKE1("ContactTo",
         set_to, NULL, RSRC_CONF | ACCESS_CONF,
-        "The form parameter containing the to address."),
+        "Expression resolving to the To address. Overridden by 'contact-header-to' in a form."),
+AP_INIT_TAKE1("ContactToMatch",
+        set_to_match, NULL, RSRC_CONF | ACCESS_CONF,
+        "Set to an expression that the To address must match."),
 AP_INIT_TAKE1("ContactFrom",
         set_from, NULL, RSRC_CONF | ACCESS_CONF,
-        "The form parameter containing the from address."),
-AP_INIT_TAKE12("ContactField",
-        set_field, NULL, RSRC_CONF | ACCESS_CONF,
-        "The form parameter containing a field, and optional field name."),
-AP_INIT_TAKE1("ContactMessage",
-        set_message, NULL, RSRC_CONF | ACCESS_CONF,
-        "The form parameter containing the message."),
-AP_INIT_TAKE1("ContactFile",
-        set_file, NULL, RSRC_CONF | ACCESS_CONF,
-        "The form parameter containing file attachments."),
+        "Expression resolving to the From address. Overridden by 'contact-header-from' in a form."),
+AP_INIT_TAKE1("ContactFromMatch",
+        set_from_match, NULL, RSRC_CONF | ACCESS_CONF,
+        "Set to an expression that the From address must match."),
 AP_INIT_TAKE1("ContactSender",
         set_sender, NULL, RSRC_CONF | ACCESS_CONF,
-        "Expression resolving to the sender email address."),
+        "Expression resolving to the Sender email address. Overridden by 'contact-header-sender' in a form."),
+AP_INIT_TAKE1("ContactReplyTo",
+        set_replyto, NULL, RSRC_CONF | ACCESS_CONF,
+        "Expression resolving to the Reply-To email address. Overridden by 'contact-header-replyto' in a form."),
 { NULL } };
 
 
@@ -1497,7 +1523,7 @@ AP_DECLARE_DATA extern const apr_bucket_type_t ap_bucket_type_contact;
  * @return The new bucket, or NULL if allocation failed
  */
 AP_DECLARE(apr_bucket*)
-ap_bucket_contact_make(apr_bucket *b, apr_pool_t *pool,
+ap_bucket_contact_make(apr_bucket *b, request_rec *r,
         apr_table_t *headers);
 
 /**
@@ -1507,7 +1533,7 @@ ap_bucket_contact_make(apr_bucket *b, apr_pool_t *pool,
  * @return The new bucket, or NULL if allocation failed
  */
 AP_DECLARE(apr_bucket*)
-ap_bucket_contact_create(apr_bucket_alloc_t *list, apr_pool_t *pool,
+ap_bucket_contact_create(apr_bucket_alloc_t *list, request_rec *r,
         apr_table_t *headers);
 
 /** @see apr_bucket_pool */
@@ -1531,13 +1557,13 @@ struct ap_bucket_contact {
     apr_bucket_heap  heap;
     /** Used while writing out the headers */
     char *end;
-    /** The pool the data was allocated from.  When the pool
+    /** The request the data was allocated from.  When the pool
      * is cleaned up, this gets set to NULL as an indicator
      * to pool_read() that the data is now on the heap and
      * so it should morph the bucket into a regular heap
      * bucket before continuing.
      */
-    apr_pool_t *pool;
+    request_rec *r;
     /** The freelist this structure was allocated from, which is
      * needed in the cleanup phase in order to allocate space on the heap
      */
@@ -1554,20 +1580,20 @@ static apr_status_t contact_bucket_cleanup(void *data)
      * out the pool and headers so we become of zero length.
      */
     h->headers = NULL;
-    h->pool = NULL;
+    h->r = NULL;
 
     return APR_SUCCESS;
 }
 
 AP_DECLARE(apr_bucket *) ap_bucket_contact_make(apr_bucket *b,
-        apr_pool_t *pool, apr_table_t *headers)
+        request_rec *r, apr_table_t *headers)
 {
     ap_bucket_contact *h;
 
     h = apr_bucket_alloc(sizeof(*h), b->list);
     h->headers = headers;
 
-    h->pool = pool;
+    h->r = r;
     h->list = b->list;
 
     b = apr_bucket_shared_make(b, h, 0, 0);
@@ -1579,20 +1605,20 @@ AP_DECLARE(apr_bucket *) ap_bucket_contact_make(apr_bucket *b,
     h->heap.base          = NULL;
     h->heap.free_func     = apr_bucket_free;
 
-    apr_pool_cleanup_register(h->pool, h, contact_bucket_cleanup,
+    apr_pool_cleanup_register(h->r->pool, h, contact_bucket_cleanup,
                               apr_pool_cleanup_null);
     return b;
 }
 
 AP_DECLARE(apr_bucket*) ap_bucket_contact_create(apr_bucket_alloc_t *list,
-        apr_pool_t *pool, apr_table_t *headers)
+        request_rec *r, apr_table_t *headers)
 {
     apr_bucket *b = apr_bucket_alloc(sizeof(*b), list);
 
     APR_BUCKET_INIT(b);
     b->free = apr_bucket_free;
     b->list = list;
-    b = ap_bucket_contact_make(b, pool, headers);
+    b = ap_bucket_contact_make(b, r, headers);
     return b;
 }
 
@@ -1605,8 +1631,8 @@ static void contact_bucket_destroy(void *data)
         /* if bucket is cleaned up before the pool, we deregister the
          * cleanuo and vanish from existence.
          */
-        if (h->pool) {
-            apr_pool_cleanup_kill(h->pool, h, contact_bucket_cleanup);
+        if (h->r) {
+            apr_pool_cleanup_kill(h->r->pool, h, contact_bucket_cleanup);
         }
         apr_bucket_free(h);
     }
@@ -1632,6 +1658,58 @@ int contact_bucket_do(void *rec, const char *key,
         const char *value)
 {
     ap_bucket_contact *h = rec;
+
+    if (!strcasecmp(key, "To")) {
+
+        contact_config_rec *conf = ap_get_module_config(h->r->per_dir_config,
+                &contact_module);
+
+        const char *expr_err = NULL;
+
+        if (conf->to_match && ap_expr_exec(h->r, conf->to_match, &expr_err) < 1) {
+
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
+                    "contact: To address '%s' does not match ContactToMatch filter, ignoring.",
+                    value);
+
+            apr_table_setn(h->r->notes, "verbose-error-to", "*");
+
+            apr_table_setn(h->r->notes, "error-notes",
+                    apr_pescape_entity(h->r->pool,
+                            apr_pstrcat(h->r->pool, "To address '", value,
+                                "' is not valid, giving up.", NULL),
+                                0));
+
+            return 0;
+        }
+
+    }
+
+    if (!strcasecmp(key, "From")) {
+
+        contact_config_rec *conf = ap_get_module_config(h->r->per_dir_config,
+                &contact_module);
+
+        const char *expr_err = NULL;
+
+        if (conf->from_match && ap_expr_exec(h->r, conf->from_match, &expr_err) < 1) {
+
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
+                    "contact: From address '%s' does not match ContactFromMatch filter, ignoring.",
+                    value);
+
+            apr_table_setn(h->r->notes, "verbose-error-to", "*");
+
+            apr_table_setn(h->r->notes, "error-notes",
+                    apr_pescape_entity(h->r->pool,
+                            apr_pstrcat(h->r->pool, "From address '", value,
+                                "' is not valid, giving up.", NULL),
+                                0));
+
+            return 0;
+        }
+
+    }
 
     h->end = stpcpy(h->end, key);
     h->end = stpcpy(h->end, ": ");
@@ -1661,23 +1739,114 @@ static apr_status_t contact_bucket_read(apr_bucket *b, const char **str,
 {
     ap_bucket_contact *h = b->data;
 
+    int ok = 1;
+
     if (!h->heap.base && h->headers) {
+
+        contact_config_rec *conf = ap_get_module_config(h->r->per_dir_config,
+                &contact_module);
+
+        const char *expr_err = NULL;
+
+        /* if headers are missing, set them from our config */
+
+        if (conf->to && !apr_table_get(h->headers, "To")) {
+
+            apr_table_set(h->headers, "To",
+                    ap_expr_str_exec(h->r, conf->to, &expr_err));
+
+            if (expr_err) {
+
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
+                        "contact: To expression cannot be set: %s",
+                        expr_err);
+
+                apr_table_setn(h->r->notes, "verbose-error-to", "*");
+                apr_table_setn(h->r->notes, "error-notes", "To expression "
+                                " is not valid, giving up.");
+
+            }
+
+        }
+
+        if (conf->from && !apr_table_get(h->headers, "From")) {
+
+            apr_table_set(h->headers, "From",
+                    ap_expr_str_exec(h->r, conf->from, &expr_err));
+
+            if (expr_err) {
+
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
+                        "contact: From expression cannot be set: %s",
+                        expr_err);
+
+                apr_table_setn(h->r->notes, "verbose-error-to", "*");
+                apr_table_setn(h->r->notes, "error-notes", "From expression "
+                                " is not valid, giving up.");
+
+            }
+
+        }
+
+        if (conf->sender && !apr_table_get(h->headers, "Sender")) {
+
+            apr_table_set(h->headers, "Sender",
+                    ap_expr_str_exec(h->r, conf->sender, &expr_err));
+
+            if (expr_err) {
+
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
+                        "contact: Sender expression cannot be set: %s",
+                        expr_err);
+
+                apr_table_setn(h->r->notes, "verbose-error-to", "*");
+                apr_table_setn(h->r->notes, "error-notes", "Sender expression "
+                                " is not valid, giving up.");
+
+            }
+
+        }
+
+        if (conf->replyto && !apr_table_get(h->headers, "Reply-To")) {
+
+            apr_table_set(h->headers, "Reply-To",
+                    ap_expr_str_exec(h->r, conf->replyto, &expr_err));
+
+            if (expr_err) {
+
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
+                        "contact: Reply-To expression cannot be set: %s",
+                        expr_err);
+
+                apr_table_setn(h->r->notes, "verbose-error-to", "*");
+                apr_table_setn(h->r->notes, "error-notes", "Reply-To expression "
+                                " is not valid, giving up.");
+
+            }
+
+        }
 
         /* render headers, morph into heap bucket */
         h->heap.alloc_len = strlen(CRLF);
         apr_table_do(contact_bucket_count, h, h->headers, NULL);
         h->heap.base = h->end = apr_bucket_alloc(h->heap.alloc_len, h->list);
-        apr_table_do(contact_bucket_do, h, h->headers, NULL);
+        ok = apr_table_do(contact_bucket_do, h, h->headers, NULL);
         h->end = stpcpy(h->end, CRLF);
         b->length = h->heap.alloc_len;
         b->type = &apr_bucket_type_heap;
         h->headers = NULL;
-        h->pool = NULL;
+        h->r = NULL;
     }
 
     *str = h->heap.base + b->start;
     *len = b->length;
-    return APR_SUCCESS;
+
+    if (ok) {
+        return APR_SUCCESS;
+    }
+    else {
+        return APR_EINVAL;
+    }
 }
 
 AP_DECLARE_DATA const apr_bucket_type_t ap_bucket_type_contact = {
@@ -1804,7 +1973,7 @@ static int init_contact(ap_filter_t * f)
     ctx->out = apr_brigade_create(f->r->pool, f->c->bucket_alloc);
     ctx->headers = apr_table_make(f->r->pool, 4);
     ctx->contact = ap_bucket_contact_create(
-             f->r->connection->bucket_alloc, f->r->pool, ctx->headers);
+             f->r->connection->bucket_alloc, f->r, ctx->headers);
     ctx->boundary = apr_psprintf(f->r->pool, "%0" APR_UINT64_T_HEX_FMT
             "%0" APR_UINT64_T_HEX_FMT, val[0], val[1]);
 
@@ -1831,9 +2000,6 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
     apr_bucket *e, *after;
     apr_status_t rv = APR_SUCCESS;
     contact_ctx *ctx = f->ctx;
-
-    contact_config_rec *conf = ap_get_module_config(f->r->per_dir_config,
-            &contact_module);
 
     /* just get out of the way of things we don't want. */
     if (mode != AP_MODE_READBYTES) {
