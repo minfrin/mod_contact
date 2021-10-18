@@ -25,6 +25,7 @@
  */
 
 #include <apr_encode.h>
+#include <apr_escape.h>
 #include <apr_hash.h>
 #include <apr_lib.h>
 #include <apr_strings.h>
@@ -175,7 +176,7 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
 
                     if (off) {
 
-                    	apr_bucket_split(e, off);
+                        apr_bucket_split(e, off);
                         APR_BUCKET_REMOVE(e);
                         APR_BRIGADE_INSERT_TAIL(bbOut, e);
 
@@ -216,7 +217,7 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
 
                     if (off) {
 
-                    	apr_bucket_split(e, off);
+                        apr_bucket_split(e, off);
                         APR_BUCKET_REMOVE(e);
                         APR_BRIGADE_INSERT_TAIL(bbOut, e);
 
@@ -613,12 +614,12 @@ typedef struct part_t {
 
 static void multipart_ref(multipart_t *mp)
 {
-	mp->refcount++;
+    mp->refcount++;
 }
 
 static void multipart_unref(multipart_t *mp)
 {
-	mp->refcount--;
+    mp->refcount--;
     if (!mp->refcount) {
         apr_pool_destroy(mp->pool);
     }
@@ -712,7 +713,7 @@ static void multipart_bucket_destroy(void *data)
             h->part = NULL;
         }
         if (h->multipart) {
-        	multipart_unref(h->multipart);
+            multipart_unref(h->multipart);
             h->multipart = NULL;
         }
         apr_bucket_free(h);
@@ -759,15 +760,15 @@ typedef struct multipart_ctx_t
 
 static apr_status_t multipart_cleanup(void *data)
 {
-	multipart_ctx *ctx = data;
+    multipart_ctx *ctx = data;
 
     apr_array_pop(ctx->multiparts);
 
     if (ctx->multiparts->nelts) {
-    	ctx->multipart = APR_ARRAY_IDX(ctx->multiparts, ctx->multiparts->nelts - 1, multipart_t *);
+        ctx->multipart = APR_ARRAY_IDX(ctx->multiparts, ctx->multiparts->nelts - 1, multipart_t *);
     }
     else {
-    	ctx->multipart = NULL;
+        ctx->multipart = NULL;
     }
     return APR_SUCCESS;
 }
@@ -1243,32 +1244,52 @@ bypass:
 
 
 
+static void send_open(request_rec *r, apr_bucket_brigade *bb, int res)
+{
 
-static int send_error(request_rec *r, int res, apr_status_t status,
+    ap_set_content_type(r, "text/xml");
+
+    r->status = res;
+
+    apr_brigade_printf(bb, NULL, NULL,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\" ?>"
+            CRLF "<contact><form>");
+
+    ap_pass_brigade(r->output_filters, bb);
+    apr_brigade_cleanup(bb);
+}
+
+static void send_close(request_rec *r, apr_bucket_brigade *bb, int res,
         const char *message)
 {
     conn_rec *c = r->connection;
-    apr_bucket_brigade *bb;
     apr_bucket *e;
 
+    apr_brigade_printf(bb, NULL, NULL, "</form><code>%d</code>"
+            "<status>%s</status><message>%s</message></contact>", res,
+            ap_get_status_line(res), apr_pescape_entity(r->pool, message, 0));
+
+    e = apr_bucket_eos_create(c->bucket_alloc);
+    APR_BRIGADE_INSERT_TAIL(bb, e);
+
+    ap_pass_brigade(r->output_filters, bb);
+    apr_brigade_cleanup(bb);
+}
+
+static int send_error(request_rec *r, apr_bucket_brigade *bb, int res,
+        apr_status_t status, const char *message)
+{
     int rv;
 
     ap_log_rerror(APLOG_MARK, APLOG_ERR, status, r, "%s", message);
+
+    send_open(r, bb, res);
 
     if ((rv = ap_discard_request_body(r)) != OK) {
         return rv;
     }
 
-    bb = apr_brigade_create(r->pool, c->bucket_alloc);
-
-    // FIXME
-    status = apr_brigade_printf(bb, NULL, NULL, "error");
-
-    e = apr_bucket_eos_create(c->bucket_alloc);
-    APR_BRIGADE_INSERT_TAIL(bb, e);
-
-    status = ap_pass_brigade(r->output_filters, bb);
-    apr_brigade_cleanup(bb);
+    send_close(r, bb, res, message);
 
     return res;
 }
@@ -1699,74 +1720,74 @@ typedef struct contact_ctx
 } contact_ctx;
 
 static apr_status_t contact_base64(contact_ctx *ctx, apr_bucket_brigade *out,
-		apr_bucket *e, int close)
+        apr_bucket *e, int close)
 {
 
-	do {
+    do {
 
-		const char *str;
-		apr_size_t len = sizeof(ctx->base64) - ctx->base64_off;
+        const char *str;
+        apr_size_t len = sizeof(ctx->base64) - ctx->base64_off;
 
-		if (!len || close) {
+        if (!len || close) {
 
-			char buf[79];
-			apr_size_t buf_len;
+            char buf[79];
+            apr_size_t buf_len;
 
-			apr_encode_base64(buf, ctx->base64, ctx->base64_off, APR_ENCODE_NONE,
-					&buf_len);
+            apr_encode_base64(buf, ctx->base64, ctx->base64_off, APR_ENCODE_NONE,
+                    &buf_len);
 
-			ctx->base64_off = 0;
-			len = sizeof(ctx->base64);
+            ctx->base64_off = 0;
+            len = sizeof(ctx->base64);
 
-			apr_brigade_write(out, NULL, NULL, buf, buf_len);
+            apr_brigade_write(out, NULL, NULL, buf, buf_len);
 
-			apr_brigade_puts(out, NULL, NULL, CRLF);
-		}
+            apr_brigade_puts(out, NULL, NULL, CRLF);
+        }
 
-		if (e) {
+        if (e) {
 
-			if (APR_BUCKET_IS_METADATA(e)) {
-				APR_BUCKET_REMOVE(e);
-				APR_BRIGADE_INSERT_TAIL(out, e);
+            if (APR_BUCKET_IS_METADATA(e)) {
+                APR_BUCKET_REMOVE(e);
+                APR_BRIGADE_INSERT_TAIL(out, e);
 
-				return APR_SUCCESS;
-			}
+                return APR_SUCCESS;
+            }
 
-			else {
-				apr_size_t l;
-				apr_status_t rv;
+            else {
+                apr_size_t l;
+                apr_status_t rv;
 
-				rv = apr_bucket_read(e, &str, &l, APR_BLOCK_READ);
+                rv = apr_bucket_read(e, &str, &l, APR_BLOCK_READ);
 
-				if (rv != APR_SUCCESS) {
-					return rv;
-				}
+                if (rv != APR_SUCCESS) {
+                    return rv;
+                }
 
-				if (l > len) {
-					apr_bucket *next;
+                if (l > len) {
+                    apr_bucket *next;
 
-					memcpy(ctx->base64 + ctx->base64_off, str, len);
-					ctx->base64_off += len;
+                    memcpy(ctx->base64 + ctx->base64_off, str, len);
+                    ctx->base64_off += len;
 
-					apr_bucket_split(e, len);
-					next = APR_BUCKET_NEXT(e);
-					apr_bucket_delete(e);
-					e = next;
-				}
-				else {
-					memcpy(ctx->base64 + ctx->base64_off, str, l);
-					ctx->base64_off += l;
+                    apr_bucket_split(e, len);
+                    next = APR_BUCKET_NEXT(e);
+                    apr_bucket_delete(e);
+                    e = next;
+                }
+                else {
+                    memcpy(ctx->base64 + ctx->base64_off, str, l);
+                    ctx->base64_off += l;
 
-					apr_bucket_delete(e);
-					e = NULL;
-				}
+                    apr_bucket_delete(e);
+                    e = NULL;
+                }
 
-			}
-		}
+            }
+        }
 
-	} while (e);
+    } while (e);
 
-	return APR_SUCCESS;
+    return APR_SUCCESS;
 }
 
 static int init_contact(ap_filter_t * f)
@@ -1810,7 +1831,6 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
     apr_bucket *e, *after;
     apr_status_t rv = APR_SUCCESS;
     contact_ctx *ctx = f->ctx;
-    int seen_eos = 0;
 
     contact_config_rec *conf = ap_get_module_config(f->r->per_dir_config,
             &contact_module);
@@ -1870,7 +1890,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
 
                 /* close off base64 */
                 if (ctx->in_base64) {
-                	contact_base64(ctx, ctx->out, NULL, 1);
+                    contact_base64(ctx, ctx->out, NULL, 1);
                     ctx->in_base64 = 0;
                 }
 
@@ -1970,7 +1990,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         apr_brigade_printf(ctx->out, NULL, NULL,
                                 CRLF "--%s" CRLF, ctx->boundary);
                         apr_brigade_puts(ctx->out, NULL, NULL,
-                        		"Content-Transfer-Encoding: base64" CRLF CRLF);
+                                "Content-Transfer-Encoding: base64" CRLF CRLF);
                         ctx->in_mime = 1;
                     }
 
@@ -2054,7 +2074,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     }
 
                     apr_brigade_puts(ctx->out, NULL, NULL,
-                    		"Content-Transfer-Encoding: base64" CRLF CRLF);
+                            "Content-Transfer-Encoding: base64" CRLF CRLF);
 
                     ctx->in_mime = 1;
 
@@ -2153,14 +2173,17 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
 
 static int contact_get(request_rec *r)
 {
-
     contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
             &contact_module);
 
     if (!conf->command) {
 
+        apr_bucket_brigade *bbOut;
+
+        bbOut = apr_brigade_create(r->pool, r->connection->bucket_alloc);
+
         /* no command, give up */
-        return send_error(r, APR_SUCCESS, HTTP_INTERNAL_SERVER_ERROR,
+        return send_error(r, bbOut, APR_SUCCESS, HTTP_INTERNAL_SERVER_ERROR,
                 "sendmail command not specified");
 
     }
@@ -2176,9 +2199,12 @@ static int contact_post(request_rec *r)
     apr_proc_t *proc;
     char *buf;
     apr_bucket_brigade *bb;
+    apr_bucket_brigade *bbOut;
+    const char *message = "Message sent successfully";
 
     apr_size_t len;
     apr_status_t status;
+    int code = HTTP_OK;
     int exitcode;
     apr_exit_why_e exitwhy;
 
@@ -2187,10 +2213,12 @@ static int contact_post(request_rec *r)
     contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
             &contact_module);
 
+    bbOut = apr_brigade_create(r->pool, r->connection->bucket_alloc);
+
     if (!conf->command) {
 
         /* no command, give up */
-        return send_error(r, APR_SUCCESS, HTTP_INTERNAL_SERVER_ERROR,
+        return send_error(r, bbOut, APR_SUCCESS, HTTP_INTERNAL_SERVER_ERROR,
                 "sendmail command not specified");
     }
 
@@ -2214,7 +2242,7 @@ static int contact_post(request_rec *r)
             ((status = apr_procattr_addrspace_set(procattr, 0))
                     != APR_SUCCESS)) {
 
-        return send_error(r, status, HTTP_INTERNAL_SERVER_ERROR,
+        return send_error(r, bbOut, status, HTTP_INTERNAL_SERVER_ERROR,
                 apr_psprintf(r->pool,
                 "couldn't set child process attributes: %s", conf->command));
     }
@@ -2225,7 +2253,7 @@ static int contact_post(request_rec *r)
             r->pool);
     if (status != APR_SUCCESS) {
 
-        return send_error(r, status, HTTP_INTERNAL_SERVER_ERROR,
+        return send_error(r, bbOut, status, HTTP_INTERNAL_SERVER_ERROR,
                 apr_psprintf(r->pool, "Could not run '%s'",
                 conf->command));
     }
@@ -2234,21 +2262,21 @@ static int contact_post(request_rec *r)
 
     if (!proc->in) {
 
-        return send_error(r, APR_EBADF, HTTP_INTERNAL_SERVER_ERROR,
+        return send_error(r, bbOut, APR_EBADF, HTTP_INTERNAL_SERVER_ERROR,
                 "Timeout could not be set on command");
     }
     apr_file_pipe_timeout_set(proc->in, r->server->timeout);
 
     if (!proc->out) {
 
-        return send_error(r, APR_EBADF, HTTP_INTERNAL_SERVER_ERROR,
+        return send_error(r, bbOut, APR_EBADF, HTTP_INTERNAL_SERVER_ERROR,
                 "Timeout could not be set on command");
     }
     apr_file_pipe_timeout_set(proc->out, r->server->timeout);
 
     if (!proc->err) {
 
-        return send_error(r, APR_EBADF, HTTP_INTERNAL_SERVER_ERROR,
+        return send_error(r, bbOut, APR_EBADF, HTTP_INTERNAL_SERVER_ERROR,
                 "Timeout could not be set on command");
     }
     apr_file_pipe_timeout_set(proc->err, r->server->timeout);
@@ -2256,6 +2284,9 @@ static int contact_post(request_rec *r)
     /* set up the contact filter */
     seen_contact = 0;
     seen_eos = 0;
+
+    /* we're committed from this point */
+    send_open(r, bbOut, HTTP_ACCEPTED);
 
     /* read message from the filter */
     bb = apr_brigade_create(r->pool, r->connection->bucket_alloc);
@@ -2265,12 +2296,12 @@ static int contact_post(request_rec *r)
                 APR_BLOCK_READ, HUGE_STRING_LEN);
 
         if (status != APR_SUCCESS) {
-            if (APR_STATUS_IS_TIMEUP(status)) {
-                return send_error(r, status, HTTP_REQUEST_TIME_OUT,
-                        "Timeout during reading request entity data");
-            }
-            return send_error(r, status, HTTP_INTERNAL_SERVER_ERROR,
-                    "Error reading request entity data");
+
+            code = ap_map_http_request_error(status, HTTP_BAD_REQUEST);
+
+            message = "Error while reading request";
+
+            break;
         }
 
         while (!APR_BRIGADE_EMPTY(bb)) {
@@ -2329,10 +2360,17 @@ static int contact_post(request_rec *r)
 
     } while (!seen_eos);
 
-    /* Is this flush really needed? */
-    apr_file_flush(proc->in);
-    apr_file_close(proc->in);
+    if (HTTP_OK == code) {
+        /* success! close out gracefully */
+        apr_file_flush(proc->in);
+        apr_file_close(proc->in);
+    }
+    else {
+        /* close in the cleanup, after the term has been ack'ed */
+        apr_proc_kill(proc, SIGTERM);
+    }
 
+    /* soak up stderr from sendmail */
     status = APR_SUCCESS;
     while (APR_SUCCESS == status) {
         char err[MAX_STRING_LEN];
@@ -2340,9 +2378,8 @@ static int contact_post(request_rec *r)
         status = apr_file_read_full(proc->err, err, sizeof(err), &len);
 
         if (status == APR_SUCCESS && len > 0) {
-// FIXME: log successful sending of email
-            //            log_message(r, status, apr_psprintf(r->pool, "%s: %s",
-//                    conf->command, apr_pstrmemdup(r->pool, err, len)));
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, status, r, "contact: %*s",
+                    (int) len, err);
         }
 
     }
@@ -2350,24 +2387,28 @@ static int contact_post(request_rec *r)
     /* how did sendmail do? */
     apr_proc_wait(proc, &exitcode, &exitwhy, APR_WAIT);
     if (exitcode || APR_PROC_EXIT != exitwhy) {
-        return send_error(
-                r,
-                APR_SUCCESS, HTTP_INTERNAL_SERVER_ERROR,
-                apr_psprintf(
-                        r->pool,
-                        "%s %s with code %d",
-                        conf->command,
-                        APR_PROC_EXIT == exitwhy ? "exited normally"
-                                : APR_PROC_SIGNAL == exitwhy ? "exited due to a signal"
-                                        : APR_PROC_SIGNAL_CORE == exitwhy ? "exited and dumped a core file"
-                                                : "exited", exitcode));
+
+        ap_log_rerror(APLOG_MARK, APLOG_INFO, status, r, "%s %s with code %d",
+            conf->command,
+            APR_PROC_EXIT == exitwhy ? "exited normally" :
+            APR_PROC_SIGNAL == exitwhy ? "exited due to a signal" :
+            APR_PROC_SIGNAL_CORE == exitwhy ?
+                    "exited and dumped a core file" : "exited", exitcode);
+
+        send_close(r, bbOut, code, message);
+
+        return OK;
     }
 
     /* did the client bail out? */
-    if (child_stopped_reading) {
-        return send_error(r, status, HTTP_INTERNAL_SERVER_ERROR,
+    else if (child_stopped_reading) {
+        send_close(r, bbOut, HTTP_INTERNAL_SERVER_ERROR,
                 "Sendmail stopped reading message, aborting");
+        return OK;
     }
+
+    /* we're done */
+    send_close(r, bbOut, HTTP_OK, "Message accepted");
 
     /* add a Location header to the message status */
 //    if (conf->dsn_location) {
@@ -2377,7 +2418,7 @@ static int contact_post(request_rec *r)
 //        return HTTP_SEE_OTHER;
 //    }
 
-    return HTTP_OK;
+    return OK;
 }
 
 static int contact_handler(request_rec *r)
