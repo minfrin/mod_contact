@@ -1291,7 +1291,7 @@ static int send_error(request_rec *r, apr_bucket_brigade *bb, int res,
 
     send_close(r, bb, res, message);
 
-    return res;
+    return OK;
 }
 
 static void *create_contact_dir_config(apr_pool_t *p, char *d)
