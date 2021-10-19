@@ -35,6 +35,11 @@ CFLAGS="$CFLAGS -I`$APXS -q INCLUDEDIR`"
 PKG_CHECK_MODULES(apr, apr-1 >= 1.2)
 PKG_CHECK_MODULES(apu, apr-util-1 >= 1.2)
 
+CFLAGS="$CFLAGS $apr_CFLAGS $apu_CFLAGS"
+CPPFLAGS="$CPPFLAGS $apr_CPPFLAGS $apu_CPPFLAGS"
+LDFLAGS="$LDFLAGS $apr_LDFLAGS $apu_LDFLAGS"
+LIBS="$LIBS $apr_LIBS $apu_LIBS"
+
 # Checks for header files.
 AC_CHECK_HEADERS(sys/xattr.h)
 
@@ -42,6 +47,7 @@ AC_CHECK_HEADERS(sys/xattr.h)
 AC_TYPE_SIZE_T
 
 # Checks for library functions.
+AC_CHECK_FUNCS([apr_brigade_split_boundary])
 
 AC_SUBST(PACKAGE_VERSION)
 AC_OUTPUT

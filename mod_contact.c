@@ -68,6 +68,10 @@ typedef struct
     int replyto_set;
 } contact_config_rec;
 
+#ifndef HAVE_APR_BRIGADE_SPLIT_BOUNDARY
+
+#define APR_BUCKETS_STRING -1
+
 /**
  * Split a brigade based on the provided boundary, or metadata buckets,
  * whichever are encountered first.
@@ -87,14 +91,15 @@ typedef struct
  * @param bbIn The input bucket brigade to search for a LF-line.
  * @param block The blocking mode to be used to split the line.
  * @param boundary The boundary string.
- * @param boundary_len The length of the boundary string.
+ * @param boundary_len The length of the boundary string. If set to
+ *        APR_BUCKETS_STRING, the length will be calculated.
  * @param maxbytes The maximum bytes to read.
  */
 apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
                                         apr_bucket_brigade *bbIn,
                                         apr_read_type_e block,
                                         const char *boundary,
-                                        apr_ssize_t boundary_len,
+                                        apr_size_t boundary_len,
                                         apr_off_t maxbytes)
 {
     apr_off_t outbytes = 0;
@@ -103,6 +108,18 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
         return APR_EINVAL;
     }
 
+    if (APR_BUCKETS_STRING == boundary_len) {
+        boundary_len = strlen(boundary);
+    }
+
+    /*
+     * While the call describes itself as searching for a boundary string,
+     * what we actually do is search for anything that is definitely not
+     * a boundary string, and allow that not-boundary data to pass through.
+     *
+     * If we find data that might be a boundary, we try read more data in
+     * until we know for sure.
+     */
     while (!APR_BRIGADE_EMPTY(bbIn)) {
 
         const char *pos;
@@ -250,7 +267,7 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
          * one byte and continue round to try again.
          */
 skip:
-// ????
+
         for (next = APR_BUCKET_NEXT(e);
                 inbytes < boundary_len && next != APR_BRIGADE_SENTINEL(bbIn);
                 next = APR_BUCKET_NEXT(next)) {
@@ -340,6 +357,7 @@ skip:
 
     return APR_INCOMPLETE;
 }
+#endif
 
 /**
  * Search for a character within a string, ignoring quoted sections.
