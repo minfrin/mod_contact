@@ -24,7 +24,13 @@
  *
  */
 
+#include <apu_version.h>
+#if APU_MAJOR_VERSION > 1 || (APU_MAJOR_VERSION == 1 && APU_MINOR_VERSION >= 7)
 #include <apr_encode.h>
+#else
+#include <apr_base64.h>
+#endif
+
 #include <apr_escape.h>
 #include <apr_hash.h>
 #include <apr_lib.h>
@@ -1048,8 +1054,12 @@ static apr_status_t contact_base64(contact_ctx *ctx, apr_bucket_brigade *out,
             char buf[79];
             apr_size_t buf_len;
 
+#if APU_MAJOR_VERSION > 1 || (APU_MAJOR_VERSION == 1 && APU_MINOR_VERSION >= 7)
             apr_encode_base64(buf, ctx->base64, ctx->base64_off, APR_ENCODE_NONE,
                     &buf_len);
+#else
+            buf_len = apr_base64_encode(buf, ctx->base64, ctx->base64_off);
+#endif
 
             ctx->base64_off = 0;
             len = sizeof(ctx->base64);
