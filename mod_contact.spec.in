@@ -8,8 +8,8 @@ License:   ASL 2.0
 Group:     System Environment/Daemons
 Source:    https://github.com/minfrin/%{name}/releases/download/%{name}-%{version}/%{name}-%{version}.tar.bz2
 Url:       https://github.com/minfrin/%{name}
-BuildRequires: gcc, pkgconfig(apr-1), pkgconfig(apr-util-1), httpd-devel, mod_multipart-devel
-Requires: httpd
+BuildRequires: gcc, pkgconfig(apr-1), pkgconfig(apr-util-1), (httpd-devel or apache-devel or apache2-devel)
+Requires: (httpd or apache or apache2), mod_multipart-devel
 
 %description
 The Apache mod_contact module provides a service that accepts
@@ -26,11 +26,15 @@ make %{?_smp_mflags}
 %make_install
 
 %files
+%if 0%{?sle_version} || 0%{?is_opensuse}
+%{_libdir}/apache2/mod_contact.so
+%else
 %{_libdir}/httpd/modules/mod_contact.so
+%endif
 
 %doc AUTHORS ChangeLog README.md
 
 %changelog
-* Tue Jun 30 2021 Graham Leggett <minfrin@sharp.fm> - 1.0.0-1
+* Wed Oct 20 2021 Graham Leggett <minfrin@sharp.fm> - 1.0.0-1
 - Initial version of the package
 
