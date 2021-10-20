@@ -41,6 +41,13 @@
 
 #include "mod_multipart.h"
 
+#undef PACKAGE_BUGREPORT
+#undef PACKAGE_NAME
+#undef PACKAGE_STRING
+#undef PACKAGE_TARNAME
+#undef PACKAGE_VERSION
+#include "config.h"
+
 module AP_MODULE_DECLARE_DATA contact_module;
 
 #define DEFAULT_COMMAND "/usr/sbin/sendmail"
