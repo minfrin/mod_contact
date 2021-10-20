@@ -1537,7 +1537,7 @@ static int contact_post(request_rec *r)
     const char * const *env;
     apr_procattr_t *procattr;
     apr_proc_t *proc;
-    char *buf;
+    char **buf;
     apr_bucket_brigade *bb;
     apr_bucket_brigade *bbOut;
     const char *message = "Message sent successfully";
