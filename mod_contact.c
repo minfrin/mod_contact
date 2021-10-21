@@ -78,9 +78,9 @@ typedef struct
     const char *command;
     apr_array_header_t *args;
     ap_expr_info_t *to;
-    ap_expr_info_t *to_match;
+    ap_regex_t *to_match;
     ap_expr_info_t *from;
-    ap_expr_info_t *from_match;
+    ap_regex_t *from_match;
     ap_expr_info_t *sender;
     ap_expr_info_t *replyto;
 } contact_config_rec;
@@ -592,15 +592,13 @@ static const char *set_to(cmd_parms *cmd, void *dconf, const char *arg)
 static const char *set_to_match(cmd_parms *cmd, void *dconf, const char *arg)
 {
     contact_config_rec *conf = dconf;
-    const char *expr_err = NULL;
 
-    conf->to_match = ap_expr_parse_cmd(cmd, arg, AP_EXPR_FLAG_RESTRICTED,
-            &expr_err, NULL);;
+    conf->to_match = ap_pregcomp(cmd->pool, arg, AP_REG_EXTENDED | AP_REG_ICASE);
     conf->to_match_set = 1;
 
-    if (expr_err) {
-        return apr_pstrcat(cmd->temp_pool, "Cannot parse expression '",
-                arg, "': ", expr_err, NULL);
+    if (!conf->to_match) {
+        return apr_pstrcat(cmd->temp_pool, "Cannot parse regular expression '",
+                arg, "'", NULL);
     }
 
     return NULL;
@@ -626,15 +624,13 @@ static const char *set_from(cmd_parms *cmd, void *dconf, const char *arg)
 static const char *set_from_match(cmd_parms *cmd, void *dconf, const char *arg)
 {
     contact_config_rec *conf = dconf;
-    const char *expr_err = NULL;
 
-    conf->from_match = ap_expr_parse_cmd(cmd, arg, AP_EXPR_FLAG_RESTRICTED,
-            &expr_err, NULL);;
+    conf->from_match = ap_pregcomp(cmd->pool, arg, AP_REG_EXTENDED | AP_REG_ICASE);
     conf->from_match_set = 1;
 
-    if (expr_err) {
-        return apr_pstrcat(cmd->temp_pool, "Cannot parse expression '",
-                arg, "': ", expr_err, NULL);
+    if (!conf->from_match) {
+        return apr_pstrcat(cmd->temp_pool, "Cannot parse regular expression '",
+                arg, "'", NULL);
     }
 
     return NULL;
@@ -690,13 +686,13 @@ AP_INIT_TAKE1("ContactTo",
         "Expression resolving to the To address. Overridden by 'contact-header-to' in a form."),
 AP_INIT_TAKE1("ContactToMatch",
         set_to_match, NULL, RSRC_CONF | ACCESS_CONF,
-        "Set to an expression that the To address must match."),
+        "Set to a regular expression that the To address must match."),
 AP_INIT_TAKE1("ContactFrom",
         set_from, NULL, RSRC_CONF | ACCESS_CONF,
         "Expression resolving to the From address. Overridden by 'contact-header-from' in a form."),
 AP_INIT_TAKE1("ContactFromMatch",
         set_from_match, NULL, RSRC_CONF | ACCESS_CONF,
-        "Set to an expression that the From address must match."),
+        "Set to a regular expression that the From address must match."),
 AP_INIT_TAKE1("ContactSender",
         set_sender, NULL, RSRC_CONF | ACCESS_CONF,
         "Expression resolving to the Sender email address. Overridden by 'contact-header-sender' in a form."),
@@ -871,9 +867,7 @@ int contact_bucket_do(void *rec, const char *key,
         contact_config_rec *conf = ap_get_module_config(h->r->per_dir_config,
                 &contact_module);
 
-        const char *expr_err = NULL;
-
-        if (conf->to_match && ap_expr_exec(h->r, conf->to_match, &expr_err) < 1) {
+        if (conf->to_match && !ap_regexec(conf->to_match, value, 0, NULL, 0)) {
 
             ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
                     "contact: To address '%s' does not match ContactToMatch filter, ignoring.",
@@ -897,9 +891,7 @@ int contact_bucket_do(void *rec, const char *key,
         contact_config_rec *conf = ap_get_module_config(h->r->per_dir_config,
                 &contact_module);
 
-        const char *expr_err = NULL;
-
-        if (conf->from_match && ap_expr_exec(h->r, conf->from_match, &expr_err) < 1) {
+        if (conf->from_match && !ap_regexec(conf->from_match, value, 0, NULL, 0)) {
 
             ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
                     "contact: From address '%s' does not match ContactFromMatch filter, ignoring.",
