@@ -867,7 +867,7 @@ int contact_bucket_do(void *rec, const char *key,
         contact_config_rec *conf = ap_get_module_config(h->r->per_dir_config,
                 &contact_module);
 
-        if (conf->to_match && !ap_regexec(conf->to_match, value, 0, NULL, 0)) {
+        if (conf->to_match && ap_regexec(conf->to_match, value, 0, NULL, 0)) {
 
             ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
                     "contact: To address '%s' does not match ContactToMatch filter, ignoring.",
@@ -891,7 +891,7 @@ int contact_bucket_do(void *rec, const char *key,
         contact_config_rec *conf = ap_get_module_config(h->r->per_dir_config,
                 &contact_module);
 
-        if (conf->from_match && !ap_regexec(conf->from_match, value, 0, NULL, 0)) {
+        if (conf->from_match && ap_regexec(conf->from_match, value, 0, NULL, 0)) {
 
             ap_log_rerror(APLOG_MARK, APLOG_ERR, APR_SUCCESS, h->r,
                     "contact: From address '%s' does not match ContactFromMatch filter, ignoring.",
@@ -1781,6 +1781,9 @@ static int contact_post(request_rec *r)
             APR_PROC_SIGNAL == exitwhy ? "exited due to a signal" :
             APR_PROC_SIGNAL_CORE == exitwhy ?
                     "exited and dumped a core file" : "exited", exitcode);
+
+        message = apr_psprintf(r->pool, "sendmail exited with code %d", exitcode);
+        code = HTTP_BAD_REQUEST;
 
         send_close(r, bbOut, code, message);
 
