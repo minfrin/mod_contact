@@ -65,22 +65,24 @@ module AP_MODULE_DECLARE_DATA contact_module;
 
 typedef struct
 {
+    int stylesheet_set:1;
+    int command_set:1;
+    int args_set:1;
+    int to_set:1;
+    int to_match_set:1;
+    int from_set:1;
+    int from_match_set:1;
+    int sender_set:1;
+    int replyto_set:1;
+    ap_expr_info_t *stylesheet;
     const char *command;
-    int command_set;
     apr_array_header_t *args;
-    int args_set;
     ap_expr_info_t *to;
-    int to_set;
     ap_expr_info_t *to_match;
-    int to_match_set;
     ap_expr_info_t *from;
-    int from_set;
     ap_expr_info_t *from_match;
-    int from_match_set;
     ap_expr_info_t *sender;
-    int sender_set;
     ap_expr_info_t *replyto;
-    int replyto_set;
 } contact_config_rec;
 
 #define APR_BUCKETS_STRING -1
@@ -408,14 +410,35 @@ skip:
 
 static void send_open(request_rec *r, apr_bucket_brigade *bb, int res)
 {
+    contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
+            &contact_module);
 
     ap_set_content_type(r, "text/xml");
 
     r->status = res;
 
-    apr_brigade_printf(bb, NULL, NULL,
+    apr_brigade_puts(bb, NULL, NULL,
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\" ?>"
-            CRLF "<contact><form>");
+            CRLF);
+
+    if (conf->stylesheet) {
+        const char *err = NULL, *stylesheet;
+
+        stylesheet = ap_expr_str_exec(r, conf->stylesheet, &err);
+        if (err) {
+            ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
+                            "Failure while evaluating the stylesheet URL expression for '%s', "
+                            "stylesheet ignored: %s", r->uri, err);
+        }
+        else {
+            apr_brigade_puts(bb, NULL, NULL, "<?xml-stylesheet type=\"text/xsl\" href=\"");
+            apr_brigade_puts(bb, NULL, NULL, ap_escape_html(r->pool, stylesheet));
+            apr_brigade_puts(bb, NULL, NULL, "\"?>" CRLF);
+        }
+
+    }
+
+    apr_brigade_puts(bb, NULL, NULL, "<contact><form>");
 
     ap_pass_brigade(r->output_filters, bb);
     apr_brigade_cleanup(bb);
@@ -482,6 +505,8 @@ static void *merge_contact_dir_config(apr_pool_t *p, void *basev, void *addv)
     contact_config_rec *add = (contact_config_rec *) addv;
     contact_config_rec *base = (contact_config_rec *) basev;
 
+    new->stylesheet = (add->stylesheet_set == 0) ? base->stylesheet : add->stylesheet;
+    new->stylesheet_set = add->stylesheet_set || base->stylesheet_set;
     new->command = (add->command_set == 0) ? base->command : add->command;
     new->command_set = add->command_set || base->command_set;
     new->args = (add->args_set == 0) ? base->args
@@ -504,6 +529,25 @@ static void *merge_contact_dir_config(apr_pool_t *p, void *basev, void *addv)
     new->replyto_set = add->replyto_set || base->replyto_set;
 
     return new;
+}
+
+static const char *set_stylesheet(cmd_parms *cmd, void *dconf, const char *stylesheet)
+{
+    contact_config_rec *conf = dconf;
+    const char *expr_err = NULL;
+
+    conf->stylesheet = ap_expr_parse_cmd(cmd, stylesheet, AP_EXPR_FLAG_STRING_RESULT,
+            &expr_err, NULL);
+
+    if (expr_err) {
+        return apr_pstrcat(cmd->temp_pool,
+                "Cannot parse expression '", stylesheet, "': ",
+                expr_err, NULL);
+    }
+
+    conf->stylesheet_set = 1;
+
+    return NULL;
 }
 
 static const char *set_command(cmd_parms *cmd, void *dconf, const char *arg)
@@ -632,6 +676,9 @@ static const char *set_replyto(cmd_parms *cmd, void *dconf, const char *arg)
 
 static const command_rec contact_cmds[] =
 {
+AP_INIT_TAKE1("ContactStylesheet", set_stylesheet, NULL,
+        RSRC_CONF | ACCESS_CONF,
+        "Set the XSLT stylesheet to be used when rendering the output."),
 AP_INIT_TAKE1("ContactCommand",
         set_command, NULL, RSRC_CONF | ACCESS_CONF,
         "Set to the name and path of the sendmail binary."),
