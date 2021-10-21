@@ -137,6 +137,7 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
                                         apr_off_t maxbytes)
 {
     apr_off_t outbytes = 0;
+    apr_off_t ignore = 0;
 
     if (!boundary || !boundary[0]) {
         return APR_EINVAL;
@@ -189,12 +190,12 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
          * If we have at least one boundary worth of data, do an optimised
          * substring search for the boundary, and split quickly if found.
          */
-        if (len >= boundary_len) {
+        if ((len - ignore) >= boundary_len) {
 
             apr_size_t off;
             apr_size_t leftover;
 
-            pos = strnstr(str, boundary, len);
+            pos = memmem(str + ignore, len - ignore, boundary, boundary_len);
 
             /* definitely found it, we leave */
             if (pos != NULL) {
@@ -223,7 +224,7 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
             off = (len - leftover);
 
             while (leftover) {
-                if (!strncmp(str + off, boundary, leftover)) {
+                if (!memcmp(str + off, boundary, leftover)) {
 
                     if (off) {
 
@@ -260,11 +261,13 @@ apr_status_t apr_brigade_split_boundary(apr_bucket_brigade *bbOut,
          */
         else {
 
-            apr_size_t off = 0;
+            apr_size_t off = ignore;
+
+            len -= ignore;
 
             /* find all definite non matches */
             while (len) {
-                if (!strncmp(str + off, boundary, len)) {
+                if (!memcmp(str + off, boundary, len)) {
 
                     if (off) {
 
@@ -326,7 +329,7 @@ skip:
             if (len > off) {
 
                 /* not a match, bail out */
-                if (strncmp(str, boundary + inbytes, off)) {
+                if (memcmp(str, boundary + inbytes, off)) {
                     break;
                 }
 
@@ -349,7 +352,7 @@ skip:
             if (len == off) {
 
                 /* not a match, bail out */
-                if (strncmp(str, boundary + inbytes, off)) {
+                if (memcmp(str, boundary + inbytes, off)) {
                     break;
                 }
 
@@ -370,7 +373,7 @@ skip:
             else if (len) {
 
                 /* not a match, bail out */
-                if (strncmp(str, boundary + inbytes, len)) {
+                if (memcmp(str, boundary + inbytes, len)) {
                     break;
                 }
 
@@ -386,11 +389,7 @@ skip:
          *
          * Bump one byte off, and loop round to search again.
          */
-        apr_bucket_split(e, 1);
-        APR_BUCKET_REMOVE(e);
-        APR_BRIGADE_INSERT_TAIL(bbOut, e);
-
-        outbytes++;
+        ignore++;
 
     }
 
