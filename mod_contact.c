@@ -1614,7 +1614,7 @@ static int contact_post(request_rec *r)
 
     buf = apr_pcalloc(r->pool, sizeof(char *) * (conf->args->nelts + 2));
     args = memcpy(buf, &conf->command, sizeof(char *));
-    memcpy(buf + sizeof(char *), conf->args->elts, sizeof(char *)
+    memcpy(buf + 1, conf->args->elts, sizeof(char *)
             * conf->args->nelts);
 
 
