@@ -1300,6 +1300,13 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     ctx->in_header = 0;
                 }
 
+                /* finish off any previous body */
+                if (ctx->state == CONTACT_BODY) {
+                    apr_bucket *b = apr_bucket_immortal_create(CRLF, 2,
+                            f->c->bucket_alloc);
+                    contact_base64(ctx, ctx->out, b, 0);
+                }
+
                 if (ctx->in_base64) {
                     contact_base64(ctx, ctx->out, NULL, 1);
                     ctx->in_base64 = 0;
