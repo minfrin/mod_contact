@@ -1180,6 +1180,8 @@ static int init_contact(ap_filter_t * f)
     ctx->boundary = apr_psprintf(f->r->pool, "%0" APR_UINT64_T_HEX_FMT
             "%0" APR_UINT64_T_HEX_FMT, val[0], val[1]);
 
+    apr_table_setn(ctx->headers, "MIME-Version", "1.0");
+
     apr_table_setn(ctx->headers, "Content-Type",
             apr_psprintf(f->r->pool, "multipart/mixed; boundary=\"%s\"",
                     ctx->boundary));
