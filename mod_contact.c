@@ -1134,7 +1134,7 @@ static apr_status_t contact_base64(contact_ctx *ctx, apr_bucket_brigade *out,
             apr_encode_base64(buf, ctx->base64, ctx->base64_off, APR_ENCODE_NONE,
                     &buf_len);
 #else
-            buf_len = apr_base64_encode(buf, ctx->base64, ctx->base64_off);
+            buf_len = apr_base64_encode(buf, ctx->base64, ctx->base64_off) - 1;
 #endif
 
             ctx->base64_off = 0;
