@@ -1416,6 +1416,8 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         apr_brigade_printf(ctx->out, NULL, NULL,
                                 CRLF "--%s" CRLF, ctx->boundary);
                         apr_brigade_puts(ctx->out, NULL, NULL,
+                                "Content-Type: text/plain; charset=\"UTF-8\"" CRLF);
+                        apr_brigade_puts(ctx->out, NULL, NULL,
                                 "Content-Transfer-Encoding: base64" CRLF CRLF);
                         ctx->in_mime = 1;
                     }
