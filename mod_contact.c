@@ -1127,7 +1127,7 @@ static apr_status_t contact_base64(contact_ctx *ctx, apr_bucket_brigade *out,
 
         if (!len || close) {
 
-            char buf[79];
+            char buf[79+1];
             apr_size_t buf_len;
 
 #if APU_MAJOR_VERSION > 1 || (APU_MAJOR_VERSION == 1 && APU_MINOR_VERSION >= 7)
