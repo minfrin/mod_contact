@@ -38,7 +38,7 @@
 
 #include "httpd.h"
 //#include "http_config.h"
-//#include "http_core.h"
+#include "http_core.h"
 #include "http_log.h"
 #include "http_protocol.h"
 #include "http_request.h"
@@ -937,6 +937,9 @@ static apr_status_t contact_bucket_read(apr_bucket *b, const char **str,
         apr_size_t *len, apr_read_type_e block)
 {
     ap_bucket_contact *h = b->data;
+    request_rec *r = h->r;
+    const char *from = NULL;
+    const char *received = NULL;
 
     int ok = 1;
 
@@ -968,10 +971,10 @@ static apr_status_t contact_bucket_read(apr_bucket *b, const char **str,
 
         }
 
-        if (conf->from && !apr_table_get(h->headers, "From")) {
+        if (conf->from && !(from = apr_table_get(h->headers, "From"))) {
 
             apr_table_set(h->headers, "From",
-                    ap_expr_str_exec(h->r, conf->from, &expr_err));
+                    (from = ap_expr_str_exec(h->r, conf->from, &expr_err)));
 
             if (expr_err) {
 
@@ -1025,10 +1028,36 @@ static apr_status_t contact_bucket_read(apr_bucket *b, const char **str,
 
         }
 
+        /* add a received header */
+        if (from) {
+            char date_str[APR_RFC822_DATE_LEN];
+
+            ap_get_remote_host(r->connection, r->per_dir_config, REMOTE_DOUBLE_REV,
+                    NULL);
+            apr_rfc822_date(date_str, apr_time_now());
+
+            received = apr_pstrcat(r->pool, "Received: from [",
+                r->connection->client_ip, "] (",
+                r->connection->remote_host ? r->connection->remote_host
+                        : r->connection->client_ip, " [", r->connection->client_ip,
+                "])\n\t", r->user ? "(Authenticated sender: " : "",
+                r->user ? r->user : "", r->user ? ")\n\t" : "", "by ",
+                r->server->server_hostname ? r->server->server_hostname
+                        : r->connection->local_ip, " (mod_contact)\n\tfor ", from,
+                "; ", date_str, CRLF, NULL);
+
+        }
+
         /* render headers, morph into heap bucket */
         h->heap.alloc_len = strlen(CRLF);
+        if (received) {
+            h->heap.alloc_len += strlen(received);
+        }
         apr_table_do(contact_bucket_count, h, h->headers, NULL);
         h->heap.base = h->end = apr_bucket_alloc(h->heap.alloc_len, h->list);
+        if (received) {
+            h->end = stpcpy(h->end, received);
+        }
         ok = apr_table_do(contact_bucket_do, h, h->headers, NULL);
         h->end = stpcpy(h->end, CRLF);
         b->length = h->heap.alloc_len;
@@ -1165,25 +1194,26 @@ static apr_status_t contact_base64(contact_ctx *ctx, apr_bucket_brigade *out,
 static int init_contact(ap_filter_t * f)
 {
     contact_ctx *ctx;
+    request_rec *r = f->r;
 
     apr_uint64_t val[2];
 
     ap_random_insecure_bytes(&val, sizeof(val));
 
-    ctx = f->ctx = apr_pcalloc(f->r->pool, sizeof(*ctx));
-    ctx->in = apr_brigade_create(f->r->pool, f->c->bucket_alloc);
-    ctx->filtered = apr_brigade_create(f->r->pool, f->c->bucket_alloc);
-    ctx->out = apr_brigade_create(f->r->pool, f->c->bucket_alloc);
-    ctx->headers = apr_table_make(f->r->pool, 4);
+    ctx = f->ctx = apr_pcalloc(r->pool, sizeof(*ctx));
+    ctx->in = apr_brigade_create(r->pool, f->c->bucket_alloc);
+    ctx->filtered = apr_brigade_create(r->pool, f->c->bucket_alloc);
+    ctx->out = apr_brigade_create(r->pool, f->c->bucket_alloc);
+    ctx->headers = apr_table_make(r->pool, 4);
     ctx->contact = ap_bucket_contact_create(
-             f->r->connection->bucket_alloc, f->r, ctx->headers);
-    ctx->boundary = apr_psprintf(f->r->pool, "%0" APR_UINT64_T_HEX_FMT
+             r->connection->bucket_alloc, r, ctx->headers);
+    ctx->boundary = apr_psprintf(r->pool, "%0" APR_UINT64_T_HEX_FMT
             "%0" APR_UINT64_T_HEX_FMT, val[0], val[1]);
 
     apr_table_setn(ctx->headers, "MIME-Version", "1.0");
 
     apr_table_setn(ctx->headers, "Content-Type",
-            apr_psprintf(f->r->pool, "multipart/mixed; boundary=\"%s\"",
+            apr_psprintf(r->pool, "multipart/mixed; boundary=\"%s\"",
                     ctx->boundary));
 
     return OK;
