@@ -61,7 +61,7 @@ module AP_MODULE_DECLARE_DATA contact_module;
 
 #define MULTIPART_READ_BLOCKSIZE      16384    /* used for reading input blocks */
 #define CONTACT_READ_BLOCKSIZE        16384    /* used for reading input blocks */
-
+#define CONTACT_NAMESPACE             "http://github.com/minfrin/mod_contact"
 
 typedef struct
 {
@@ -441,7 +441,8 @@ static void send_open(request_rec *r, apr_bucket_brigade *bb, int res)
 
     }
 
-    apr_brigade_puts(bb, NULL, NULL, "<contact><form>");
+    apr_brigade_puts(bb, NULL, NULL,
+            "<contact xmlns=\"" CONTACT_NAMESPACE "\"><form>");
 
     ap_pass_brigade(r->output_filters, bb);
     apr_brigade_cleanup(bb);
@@ -456,7 +457,7 @@ static void send_close(request_rec *r, apr_bucket_brigade *bb, int res,
     const char *error = apr_table_get(r->notes, "error-notes");
 
     apr_brigade_printf(bb, NULL, NULL, "</form><code>%d</code>"
-            "<status>%s</status><message>%s</message></contact>", res,
+            "<status>%s</status><message>%s</message></contact>" CRLF, res,
             ap_get_status_line(res),
             apr_pescape_entity(r->pool, error ? error : message, 0));
 
