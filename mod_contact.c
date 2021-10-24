@@ -22,6 +22,26 @@
  * a form POST and optional file uploads, and sends the contents
  * of the form as an email.
  *
+ * Example configuration:
+ *
+ * <IfModule !multipart_module>
+ *   LoadModule multipart_module modules/mod_multipart.so
+ * </IfModule>
+ * <IfModule !contact_module>
+ *   LoadModule contact_module modules/mod_contact.so
+ * </IfModule>
+ *
+ * <Location /contact/hello/>
+ *   SetHandler contact
+ *   SetInputFilter CONTACT;MULTIPART
+ *   ContactStylesheet /contact/contact.xsd
+ * #  ContactToMatch ^hello@example.com$
+ * #  ContactFromMatch ^webmaster@hostingprovider.com$
+ *   ContactTo recipient@destination.com
+ *   ContactFrom webmaster@hostingprovider.com
+ *   ContactArguments -t
+ * </Location>
+ *
  */
 
 #include <apu_version.h>
@@ -61,7 +81,7 @@ module AP_MODULE_DECLARE_DATA contact_module;
 
 #define MULTIPART_READ_BLOCKSIZE      16384    /* used for reading input blocks */
 #define CONTACT_READ_BLOCKSIZE        16384    /* used for reading input blocks */
-#define CONTACT_NAMESPACE             "http://github.com/minfrin/mod_contact"
+#define CONTACT_NAMESPACE             "https://github.com/minfrin/mod_contact"
 
 typedef struct
 {
