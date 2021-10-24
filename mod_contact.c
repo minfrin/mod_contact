@@ -83,6 +83,7 @@ typedef struct
     ap_regex_t *from_match;
     ap_expr_info_t *sender;
     ap_expr_info_t *replyto;
+    int should_write_form;
 } contact_config_rec;
 
 #define APR_BUCKETS_STRING -1
@@ -413,6 +414,8 @@ static void send_open(request_rec *r, apr_bucket_brigade *bb, int res)
     contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
             &contact_module);
 
+    conf->should_write_form = 1;
+
     ap_set_content_type(r, "text/xml");
 
     r->status = res;
@@ -480,6 +483,68 @@ static int send_error(request_rec *r, apr_bucket_brigade *bb, int res,
     send_close(r, bb, res, message);
 
     return OK;
+}
+
+static void contact_form_open(request_rec *r, const char *name)
+{
+    contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
+            &contact_module);
+
+    if (conf->should_write_form) {
+        ap_rputs("<input name=\"", r);
+        ap_rputs(apr_pescape_entity(r->pool, name, 0), r);
+        ap_rputs("\">", r);
+    }
+}
+
+static void contact_form_write(request_rec *r, apr_bucket *e)
+{
+    contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
+            &contact_module);
+
+    if (conf->should_write_form) {
+        const char *str;
+        apr_size_t len;
+
+        if (APR_SUCCESS == apr_bucket_read(e, &str, &len, APR_BLOCK_READ) && len > 0) {
+
+            apr_size_t elen;
+
+            if (APR_SUCCESS == apr_escape_entity(NULL, str, len, 1, &elen)) {
+                char *buf = apr_palloc(r->pool, elen);
+                apr_escape_entity(buf, str, len, 1, &elen);
+                ap_rwrite(buf, elen, r);
+            }
+            else {
+                ap_rwrite(str, len, r);
+            }
+        }
+    }
+}
+
+static void contact_form_brigade(request_rec *r, apr_bucket_brigade *bb)
+{
+    contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
+            &contact_module);
+
+    if (conf->should_write_form) {
+        apr_bucket *e;
+
+        for (e = APR_BRIGADE_FIRST(bb); e != APR_BRIGADE_SENTINEL(bb); e
+                = APR_BUCKET_NEXT(e)) {
+            contact_form_write(r, e);
+        }
+    }
+}
+
+static void contact_form_close(request_rec *r)
+{
+    contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
+            &contact_module);
+
+    if (conf->should_write_form) {
+        ap_rputs("</input>", r);
+    }
 }
 
 static void *create_contact_dir_config(apr_pool_t *p, char *d)
@@ -1112,6 +1177,7 @@ typedef struct contact_ctx
     int in_header:1;
     int in_mime:1;
     int in_base64:1;
+    int in_form:1;
     int ignore:1;
     contact_state_e state:2;
 } contact_ctx;
@@ -1302,6 +1368,11 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     ctx->in_mime = 0;
                 }
 
+                if (ctx->in_form) {
+                    contact_form_close(f->r);
+                    ctx->in_form = 0;
+                }
+
                 APR_BRIGADE_CONCAT(ctx->out, ctx->in);
                 ctx->seen_eos = 1;
                 break;
@@ -1344,6 +1415,11 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     ctx->in_base64 = 0;
                 }
 
+                if (ctx->in_form) {
+                    contact_form_close(f->r);
+                    ctx->in_form = 0;
+                }
+
                 if (strcasecmp(h->multipart->subtype, "form-data")) {
                     /* not form-data - skip */
                 }
@@ -1359,6 +1435,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         && !strcmp(h->part->dsp_name, "contact-header-to")) {
                     ctx->header = "To";
                     ctx->state = CONTACT_HEADER;
+                    ctx->in_form = 1;
                 }
 
                 /* the from address */
@@ -1368,6 +1445,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         && !strcmp(h->part->dsp_name, "contact-header-from")) {
                     ctx->header = "From";
                     ctx->state = CONTACT_HEADER;
+                    ctx->in_form = 1;
                 }
 
                 /* the sender address */
@@ -1377,6 +1455,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         && !strcmp(h->part->dsp_name, "contact-header-sender")) {
                     ctx->header = "Sender";
                     ctx->state = CONTACT_HEADER;
+                    ctx->in_form = 1;
                 }
 
                 /* the replyto address */
@@ -1386,6 +1465,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         && !strcmp(h->part->dsp_name, "contact-header-replyto")) {
                     ctx->header = "Reply-To";
                     ctx->state = CONTACT_HEADER;
+                    ctx->in_form = 1;
                 }
 
                 /* the subject address */
@@ -1395,6 +1475,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         && !strcmp(h->part->dsp_name, "contact-header-subject")) {
                     ctx->header = "Subject";
                     ctx->state = CONTACT_HEADER;
+                    ctx->in_form = 1;
                 }
 
                 /* the body field */
@@ -1403,6 +1484,8 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                         && h->part->dsp_name
                         && !strncmp(h->part->dsp_name,
                                 "contact-body-", 13)) {
+
+                    apr_bucket *b;
 
                     /* send contact bucket if unsent */
                     if (ctx->contact) {
@@ -1423,13 +1506,15 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     }
 
                     /* write out body start */
-                    apr_brigade_printf(ctx->filtered, NULL, NULL,
-                            "%s:" CRLF, h->part->dsp_name + 13);
-
-                    APR_BRIGADE_PREPEND(ctx->in, ctx->filtered);
+                    b = apr_bucket_heap_create(h->part->dsp_name + 13,
+                            strlen(h->part->dsp_name + 13), NULL, f->c->bucket_alloc);
+                    contact_base64(ctx, ctx->out, b, 0);
+                    b = apr_bucket_immortal_create(":" CRLF, 3,
+                            f->c->bucket_alloc);
+                    contact_base64(ctx, ctx->out, b, 0);
 
                     ctx->in_base64 = 1;
-
+                    ctx->in_form = 1;
                     ctx->state = CONTACT_BODY;
                 }
 
@@ -1505,9 +1590,7 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                             "Content-Transfer-Encoding: base64" CRLF CRLF);
 
                     ctx->in_mime = 1;
-
                     ctx->in_base64 = 1;
-
                     ctx->state = CONTACT_ATTACHMENT;
                 }
 
@@ -1515,6 +1598,10 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     // ignore multipart, and moan
 
                     ctx->ignore = 1;
+                }
+
+                if (ctx->in_form) {
+                    contact_form_open(f->r, h->part->dsp_name);
                 }
 
                 apr_bucket_delete(e);
@@ -1545,9 +1632,18 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
 
                 if (rv == APR_INCOMPLETE) {
                     ctx->in_header = 1;
+
+                    if (ctx->in_form) {
+                        contact_form_brigade(f->r, ctx->filtered);
+                    }
+
                     continue;
                 }
                 else if (rv == APR_SUCCESS) {
+
+                    if (ctx->in_form) {
+                        contact_form_brigade(f->r, ctx->filtered);
+                    }
 
                     contact_bucket_set_header(ctx->contact, ctx->header,
                             ctx->filtered);
@@ -1571,6 +1667,10 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                 }
 
                 contact_base64(ctx, ctx->out, e, 0);
+
+                if (ctx->in_form) {
+                    contact_form_write(f->r, e);
+                }
 
                 continue;
             }
@@ -1604,11 +1704,11 @@ static int contact_get(request_rec *r)
     contact_config_rec *conf = ap_get_module_config(r->per_dir_config,
             &contact_module);
 
+    apr_bucket_brigade *bbOut;
+
+    bbOut = apr_brigade_create(r->pool, r->connection->bucket_alloc);
+
     if (!conf->command) {
-
-        apr_bucket_brigade *bbOut;
-
-        bbOut = apr_brigade_create(r->pool, r->connection->bucket_alloc);
 
         /* no command, give up */
         return send_error(r, bbOut, APR_SUCCESS, HTTP_INTERNAL_SERVER_ERROR,
@@ -1616,7 +1716,10 @@ static int contact_get(request_rec *r)
 
     }
 
-    return DECLINED;
+    send_open(r, bbOut, HTTP_OK);
+    send_close(r, bbOut, HTTP_OK, "");
+
+    return OK;
 }
 
 static int contact_post(request_rec *r)
