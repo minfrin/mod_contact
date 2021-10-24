@@ -481,6 +481,13 @@ static void send_close(request_rec *r, apr_bucket_brigade *bb, int res,
             ap_get_status_line(res),
             apr_pescape_entity(r->pool, error ? error : message, 0));
 
+    if (message) {
+        apr_brigade_printf(bb, NULL, NULL, "<message>%s</message>",
+                apr_pescape_entity(r->pool, error ? error : message, 0));
+    }
+
+    apr_brigade_puts(bb, NULL, NULL, "</contact>" CRLF);
+
     e = apr_bucket_eos_create(c->bucket_alloc);
     APR_BRIGADE_INSERT_TAIL(bb, e);
 
@@ -1738,7 +1745,7 @@ static int contact_get(request_rec *r)
     }
 
     send_open(r, bbOut, HTTP_OK);
-    send_close(r, bbOut, HTTP_OK, "");
+    send_close(r, bbOut, HTTP_OK, NULL);
 
     return OK;
 }
