@@ -69,5 +69,5 @@ To avoid sent emails being marked as either spam or forged, the following rules 
 
 - The email account receiving the email must be set using either **ContactTo**, or a combination of **ContactToMatch** and **contact-header-to**. The **ContactToMatch** directive ensures the gateway does not become an open relay.
 
-- The email account sending the eamil must be set using either **ContactFrom**, or a combination of **ContactFromMatch** and **contact-header-from**. The From address must be an email address that is allowed to send mail from your webserver. This might be your hosting provider, or an address you have configured with your hostung provider. Setting the From address to an address that is not allowed to send mail from your webserver will see mail marked as forged.
+- The email account sending the eamil must be set using either **ContactFrom**, or a combination of **ContactFromMatch** and **contact-header-from**. The From address must be an email address that is allowed to send mail from your webserver. This might be your hosting provider, or an address you have configured with your hosting provider. Setting the From address to an address that is not allowed to send mail from your webserver will see mail marked as forged.
 
