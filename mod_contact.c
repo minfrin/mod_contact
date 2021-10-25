@@ -477,7 +477,7 @@ static void send_close(request_rec *r, apr_bucket_brigade *bb, int res,
     const char *error = apr_table_get(r->notes, "error-notes");
 
     apr_brigade_printf(bb, NULL, NULL, "</form><code>%d</code>"
-            "<status>%s</status>" CRLF, res,
+            "<status>%s</status>", res,
             ap_get_status_line(res));
 
     if (message) {
