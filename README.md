@@ -4,6 +4,25 @@ An Apache httpd module that implements a contact us form with file upload.
 ## example
 For an example of how the module is deployed, see the examples directory.
 
+```
+<IfModule !multipart_module>
+  LoadModule multipart_module modules/mod_multipart.so
+</IfModule>
+<IfModule !contact_module>
+  LoadModule contact_module modules/mod_contact.so
+</IfModule>
+
+<Location /contact/hello/>
+  SetHandler contact
+  SetInputFilter CONTACT;MULTIPART
+  ContactStylesheet /contact/contact.xsl
+#  ContactToMatch ^hello@example.com$
+#  ContactFromMatch ^webmaster@hostingprovider.com$
+  ContactTo hello@example.com
+  ContactFrom webmaster@hostingprovider.com
+</Location>
+```
+
 ## directives
 **ContactStylesheet**
 : Set the XSLT stylesheet to be used when rendering the output.
