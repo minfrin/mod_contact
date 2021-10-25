@@ -1894,8 +1894,13 @@ static int contact_post(request_rec *r)
 
             /* if no contact bucket? send headers manually */
             if (!seen_contact) {
-// FIXME
-                seen_contact = 1;
+
+                /* for now, we return an error */
+                code = HTTP_INTERNAL_SERVER_ERROR;
+                message = "CONTACT filter is missing, and is currently required";
+
+                apr_bucket_delete(e);
+                continue;
             }
 
             /* read */
