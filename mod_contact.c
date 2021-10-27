@@ -1489,63 +1489,70 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     ctx->contact = NULL;
                 }
 
-                /* write out mime start */
-                apr_brigade_printf(ctx->out, NULL, NULL,
-                        CRLF "--%s" CRLF, ctx->boundary);
-
-                if (h->part->ct) {
-                    apr_brigade_puts(ctx->out, NULL, NULL, "Content-Type: ");
-                    apr_brigade_puts(ctx->out, NULL, NULL, h->part->ct);
-                    if (h->part->ct_boundary) {
-                        apr_brigade_printf(ctx->out, NULL, NULL,
-                                "; boundary=\"%s\"", h->part->ct_boundary);
-                    }
-                    if (h->part->ct_charset) {
-                        apr_brigade_printf(ctx->out, NULL, NULL,
-                                "; charset=\"%s\"", h->part->ct_charset);
-                    }
-                    apr_brigade_puts(ctx->out, NULL, NULL,
-                            CRLF);
+                /* ignore empty files */
+                if (!h->part->dsp_filename || !h->part->dsp_filename[0]) {
+                    ctx->ignore = 1;
                 }
+                else {
 
-                if (h->part->dsp) {
-                    apr_brigade_puts(ctx->out, NULL, NULL, "Content-Disposition: ");
-                    if (h->part->dsp_name[8] == 'a' || h->part->dsp_name[8] == 'A') {
-                        apr_brigade_puts(ctx->out, NULL, NULL, "attachment");
+                    /* write out mime start */
+                    apr_brigade_printf(ctx->out, NULL, NULL,
+                            CRLF "--%s" CRLF, ctx->boundary);
+
+                    if (h->part->ct) {
+                        apr_brigade_puts(ctx->out, NULL, NULL, "Content-Type: ");
+                        apr_brigade_puts(ctx->out, NULL, NULL, h->part->ct);
+                        if (h->part->ct_boundary) {
+                            apr_brigade_printf(ctx->out, NULL, NULL,
+                                    "; boundary=\"%s\"", h->part->ct_boundary);
+                        }
+                        if (h->part->ct_charset) {
+                            apr_brigade_printf(ctx->out, NULL, NULL,
+                                    "; charset=\"%s\"", h->part->ct_charset);
+                        }
+                        apr_brigade_puts(ctx->out, NULL, NULL,
+                                CRLF);
                     }
-                    else {
-                        apr_brigade_puts(ctx->out, NULL, NULL, "inline");
+
+                    if (h->part->dsp) {
+                        apr_brigade_puts(ctx->out, NULL, NULL, "Content-Disposition: ");
+                        if (h->part->dsp_name[8] == 'a' || h->part->dsp_name[8] == 'A') {
+                            apr_brigade_puts(ctx->out, NULL, NULL, "attachment");
+                        }
+                        else {
+                            apr_brigade_puts(ctx->out, NULL, NULL, "inline");
+                        }
+                        if (h->part->dsp_filename) {
+                            apr_brigade_printf(ctx->out, NULL, NULL,
+                                    "; filename=\"%s\"", h->part->dsp_filename);
+                        }
+                        if (h->part->dsp_create) {
+                            apr_brigade_printf(ctx->out, NULL, NULL,
+                                    "; creation-date=\"%s\"", h->part->dsp_create);
+                        }
+                        if (h->part->dsp_mod) {
+                            apr_brigade_printf(ctx->out, NULL, NULL,
+                                    "; modification-date=\"%s\"", h->part->dsp_mod);
+                        }
+                        if (h->part->dsp_read) {
+                            apr_brigade_printf(ctx->out, NULL, NULL,
+                                    "; read-date=\"%s\"", h->part->dsp_read);
+                        }
+                        if (h->part->dsp_size) {
+                            apr_brigade_printf(ctx->out, NULL, NULL,
+                                    "; size=\"%s\"", h->part->dsp_size);
+                        }
+                        apr_brigade_puts(ctx->out, NULL, NULL,
+                                CRLF);
                     }
-                    if (h->part->dsp_filename) {
-                        apr_brigade_printf(ctx->out, NULL, NULL,
-                                "; filename=\"%s\"", h->part->dsp_filename);
-                    }
-                    if (h->part->dsp_create) {
-                        apr_brigade_printf(ctx->out, NULL, NULL,
-                                "; creation-date=\"%s\"", h->part->dsp_create);
-                    }
-                    if (h->part->dsp_mod) {
-                        apr_brigade_printf(ctx->out, NULL, NULL,
-                                "; modification-date=\"%s\"", h->part->dsp_mod);
-                    }
-                    if (h->part->dsp_read) {
-                        apr_brigade_printf(ctx->out, NULL, NULL,
-                                "; read-date=\"%s\"", h->part->dsp_read);
-                    }
-                    if (h->part->dsp_size) {
-                        apr_brigade_printf(ctx->out, NULL, NULL,
-                                "; size=\"%s\"", h->part->dsp_size);
-                    }
+
                     apr_brigade_puts(ctx->out, NULL, NULL,
-                            CRLF);
+                            "Content-Transfer-Encoding: base64" CRLF CRLF);
+
+                    ctx->in_mime = 1;
+                    ctx->in_base64 = 1;
+                    ctx->state = CONTACT_ATTACHMENT;
                 }
-
-                apr_brigade_puts(ctx->out, NULL, NULL,
-                        "Content-Transfer-Encoding: base64" CRLF CRLF);
-
-                ctx->in_mime = 1;
-                ctx->in_base64 = 1;
-                ctx->state = CONTACT_ATTACHMENT;
             }
 
             else {
