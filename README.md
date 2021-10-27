@@ -23,6 +23,10 @@ For an example of how the module is deployed, see the examples directory.
 </Location>
 ```
 
+## binaries
+RPMs for Fedora/Redhat derivatives are available through
+[COPR](https://copr.fedorainfracloud.org/coprs/minfrin/mod_contact/).
+
 ## directives
 **ContactStylesheet**
 : Set the XSLT stylesheet to be used when rendering the output.
