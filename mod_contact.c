@@ -1974,7 +1974,7 @@ static int contact_post(request_rec *r)
     }
 
     /* we're done */
-    send_close(r, bbOut, HTTP_OK, "Message accepted");
+    send_close(r, bbOut, HTTP_OK, "Message accepted for delivery");
 
     /* add a Location header to the message status */
 //    if (conf->dsn_location) {
