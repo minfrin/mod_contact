@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.71])
-AC_INIT([mod_contact],[1.0.0],[minfrin@sharp.fm])
+AC_INIT([mod_contact],[1.0.1],[minfrin@sharp.fm])
 AM_INIT_AUTOMAKE([dist-bzip2])
 AC_CONFIG_FILES([Makefile mod_contact.spec])
 AC_CONFIG_SRCDIR([mod_contact.c])
