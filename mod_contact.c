@@ -56,6 +56,7 @@
 #include <apr_lib.h>
 #include <apr_strings.h>
 
+#include "mod_contact.h"
 #include "httpd.h"
 //#include "http_config.h"
 #include "http_core.h"
@@ -794,78 +795,6 @@ AP_INIT_TAKE1("ContactReplyTo",
 { NULL } };
 
 
-
-/**
- * The CONTACT bucket type.  This bucket represents the headers that will be
- * added to the email. If this bucket is still available when the pool is
- * cleared, the metadata is cleared.
- *
- * When read, this bucket expands into the headers of the message, containing
- * at least the to, from and subject.
- */
-AP_DECLARE_DATA extern const apr_bucket_type_t ap_bucket_type_contact;
-
-/**
- * Determine if a bucket is a CONTACT bucket
- * @param e The bucket to inspect
- * @return true or false
- */
-#define AP_BUCKET_IS_CONTACT(e)        ((e)->type == &ap_bucket_type_contact)
-
-/**
- * Make the bucket passed in a CONTACT bucket
- * @param b The bucket to make into an CONTACT bucket
- * @return The new bucket, or NULL if allocation failed
- */
-AP_DECLARE(apr_bucket*)
-ap_bucket_contact_make(apr_bucket *b, request_rec *r,
-        apr_table_t *headers);
-
-/**
- * Create a bucket referring to multipart metadata.
- *
- * @param list The freelist from which this bucket should be allocated
- * @return The new bucket, or NULL if allocation failed
- */
-AP_DECLARE(apr_bucket*)
-ap_bucket_contact_create(apr_bucket_alloc_t *list, request_rec *r,
-        apr_table_t *headers);
-
-/** @see apr_bucket_pool */
-typedef struct ap_bucket_contact ap_bucket_contact;
-
-/**
- * A bucket referring to the headers of a message.
- */
-struct ap_bucket_contact {
-    /** The contact bucket must be able to be easily morphed to a heap
-     * bucket if the pool gets cleaned up before all references are
-     * destroyed.  This apr_bucket_heap structure is populated automatically
-     * when the pool gets cleaned up, and subsequent calls to pool_read()
-     * will result in the apr_bucket in question being morphed into a
-     * regular heap bucket.  (To avoid having to do many extra refcount
-     * manipulations and b->data manipulations, the ap_bucket_contact
-     * struct actually *contains* the apr_bucket_heap struct that it
-     * will become as its first element; the two share their
-     * apr_bucket_refcount members.)
-     */
-    apr_bucket_heap  heap;
-    /** Used while writing out the headers */
-    char *end;
-    /** The request the data was allocated from.  When the pool
-     * is cleaned up, this gets set to NULL as an indicator
-     * to pool_read() that the data is now on the heap and
-     * so it should morph the bucket into a regular heap
-     * bucket before continuing.
-     */
-    request_rec *r;
-    /** The freelist this structure was allocated from, which is
-     * needed in the cleanup phase in order to allocate space on the heap
-     */
-    apr_bucket_alloc_t *list;
-    /** The headers to be sent */
-    apr_table_t *headers;
-};
 
 static apr_status_t contact_bucket_cleanup(void *data)
 {
