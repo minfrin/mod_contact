@@ -16,6 +16,14 @@ The Apache mod_contact module provides a service that accepts
 a form POST and optional file uploads, and sends the contents
 of the form as an email.
 
+%package devel
+Group: Development/Libraries
+Summary: Development tools for the mod_contact filters.
+Requires: (httpd-devel or apache-devel or apache2-devel)
+
+%description devel
+Header file for the mod_contact filters converting a form to an email.
+
 %prep
 %setup -q
 %build
@@ -30,6 +38,13 @@ make %{?_smp_mflags}
 %{_libdir}/apache2/mod_contact.so
 %else
 %{_libdir}/httpd/modules/mod_contact.so
+%endif
+
+%files devel
+%if 0%{?sle_version} || 0%{?is_opensuse}
+%{_includedir}/apache2/mod_contact.h
+%else
+%{_includedir}/httpd/mod_contact.h
 %endif
 
 %doc AUTHORS ChangeLog README.md
