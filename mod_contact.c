@@ -1335,46 +1335,182 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
     }
 
     /* read parts until we run out */
-//    do {
+    if (APR_BRIGADE_EMPTY(ctx->in)) {
+        rv = ap_get_brigade(f->next, ctx->in, mode, block,
+                CONTACT_READ_BLOCKSIZE);
+    }
 
-        if (APR_BRIGADE_EMPTY(ctx->in)) {
-            rv = ap_get_brigade(f->next, ctx->in, mode, block,
-                    CONTACT_READ_BLOCKSIZE);
+    /* if an error was received, bail out now. If the error is
+     * EAGAIN and we have not yet seen an EOS, we will definitely
+     * be called again, at which point we will send our buffered
+     * data. Instead of sending EAGAIN, some filters return an
+     * empty brigade instead when data is not yet available. In
+     * this case, we drop through and pass buffered data, if any.
+     */
+    if (APR_STATUS_IS_EAGAIN(rv)
+        || (rv == APR_SUCCESS
+            && block == APR_NONBLOCK_READ
+            && APR_BRIGADE_EMPTY(ctx->in))) {
+        return APR_EAGAIN;
+    }
+    if (APR_SUCCESS != rv) {
+        return rv;
+    }
+
+    while (!APR_BRIGADE_EMPTY(ctx->in)) {
+
+        const char *str;
+        apr_size_t len;
+
+        e = APR_BRIGADE_FIRST(ctx->in);
+
+        if (APR_BUCKET_IS_EOS(e)) {
+
+            /* finish off any previous header */
+            if (ctx->in_header) {
+                contact_bucket_set_header(ctx->contact, ctx->header,
+                        ctx->filtered);
+                ctx->header = NULL;
+                ctx->in_header = 0;
+            }
+
+            /* send contact bucket if unsent */
+            if (ctx->contact) {
+                APR_BRIGADE_INSERT_TAIL(ctx->out, ctx->contact);
+                ctx->contact = NULL;
+            }
+
+            /* close off base64 */
+            if (ctx->in_base64) {
+                contact_base64(ctx, ctx->out, NULL, 1);
+                ctx->in_base64 = 0;
+            }
+
+            /* write out mime end if needed */
+            if (ctx->in_mime) {
+                apr_brigade_printf(ctx->out, NULL, NULL,
+                        CRLF "--%s--" CRLF CRLF, ctx->boundary);
+                ctx->in_mime = 0;
+            }
+
+            if (ctx->in_form) {
+                contact_form_close(f->r);
+                ctx->in_form = 0;
+            }
+
+            APR_BRIGADE_CONCAT(ctx->out, ctx->in);
+            ctx->seen_eos = 1;
+            break;
         }
 
-        /* if an error was received, bail out now. If the error is
-         * EAGAIN and we have not yet seen an EOS, we will definitely
-         * be called again, at which point we will send our buffered
-         * data. Instead of sending EAGAIN, some filters return an
-         * empty brigade instead when data is not yet available. In
-         * this case, we drop through and pass buffered data, if any.
+        if (APR_BUCKET_IS_FLUSH(e)) {
+            APR_BUCKET_REMOVE(e);
+            APR_BRIGADE_INSERT_TAIL(ctx->out, e);
+            break;
+        }
+
+        /*
+         * Multipart buckets represent the start of each form element,
+         * as well as the end of the previous form element.
          */
-        if (APR_STATUS_IS_EAGAIN(rv)
-            || (rv == APR_SUCCESS
-                && block == APR_NONBLOCK_READ
-                && APR_BRIGADE_EMPTY(ctx->in))) {
-            return APR_EAGAIN;
-        }
-        if (APR_SUCCESS != rv) {
-            return rv;
-        }
+        if (AP_BUCKET_IS_MULTIPART(e)) {
 
-        while (!APR_BRIGADE_EMPTY(ctx->in)) {
+            ap_bucket_multipart *h = e->data;
 
-            const char *str;
-            apr_size_t len;
+            /* stop ignoring data */
+            ctx->ignore = 0;
 
-            e = APR_BRIGADE_FIRST(ctx->in);
+            /* finish off any previous header */
+            if (ctx->in_header) {
+                contact_bucket_set_header(ctx->contact, ctx->header,
+                        ctx->filtered);
+                ctx->header = NULL;
+                ctx->in_header = 0;
+            }
 
-            if (APR_BUCKET_IS_EOS(e)) {
+            /* finish off any previous body */
+            if (ctx->state == CONTACT_BODY) {
+                apr_bucket *b = apr_bucket_immortal_create(CRLF, 2,
+                        f->c->bucket_alloc);
+                contact_base64(ctx, ctx->out, b, 0);
+            }
 
-                /* finish off any previous header */
-                if (ctx->in_header) {
-                    contact_bucket_set_header(ctx->contact, ctx->header,
-                            ctx->filtered);
-                    ctx->header = NULL;
-                    ctx->in_header = 0;
-                }
+            if (ctx->in_base64) {
+                contact_base64(ctx, ctx->out, NULL, 1);
+                ctx->in_base64 = 0;
+            }
+
+            if (ctx->in_form) {
+                contact_form_close(f->r);
+                ctx->in_form = 0;
+            }
+
+            if (strcasecmp(h->multipart->subtype, "form-data")) {
+                /* not form-data - skip */
+            }
+
+            else if (!h->part->dsp_name || !h->part->dsp_name[0]) {
+                /* name missing - skip */
+            }
+
+            /* the to address */
+            else if ((ctx->state == CONTACT_NONE ||
+                    ctx->state == CONTACT_HEADER)
+                    && h->part->dsp_name
+                    && !strcmp(h->part->dsp_name, "contact-header-to")) {
+                ctx->header = "To";
+                ctx->state = CONTACT_HEADER;
+                ctx->in_form = 1;
+            }
+
+            /* the from address */
+            else if ((ctx->state == CONTACT_NONE ||
+                    ctx->state == CONTACT_HEADER)
+                    && h->part->dsp_name
+                    && !strcmp(h->part->dsp_name, "contact-header-from")) {
+                ctx->header = "From";
+                ctx->state = CONTACT_HEADER;
+                ctx->in_form = 1;
+            }
+
+            /* the sender address */
+            else if ((ctx->state == CONTACT_NONE ||
+                    ctx->state == CONTACT_HEADER)
+                    && h->part->dsp_name
+                    && !strcmp(h->part->dsp_name, "contact-header-sender")) {
+                ctx->header = "Sender";
+                ctx->state = CONTACT_HEADER;
+                ctx->in_form = 1;
+            }
+
+            /* the replyto address */
+            else if ((ctx->state == CONTACT_NONE ||
+                    ctx->state == CONTACT_HEADER)
+                    && h->part->dsp_name
+                    && !strcmp(h->part->dsp_name, "contact-header-replyto")) {
+                ctx->header = "Reply-To";
+                ctx->state = CONTACT_HEADER;
+                ctx->in_form = 1;
+            }
+
+            /* the subject address */
+            else if ((ctx->state == CONTACT_NONE
+                    || ctx->state == CONTACT_HEADER)
+                    && h->part->dsp_name
+                    && !strcmp(h->part->dsp_name, "contact-header-subject")) {
+                ctx->header = "Subject";
+                ctx->state = CONTACT_HEADER;
+                ctx->in_form = 1;
+            }
+
+            /* the body field */
+            else if ((ctx->state == CONTACT_NONE || ctx->state == CONTACT_HEADER
+                    || ctx->state == CONTACT_BODY)
+                    && h->part->dsp_name
+                    && !strncmp(h->part->dsp_name,
+                            "contact-body-", 13)) {
+
+                apr_bucket *b;
 
                 /* send contact bucket if unsent */
                 if (ctx->contact) {
@@ -1382,333 +1518,192 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                     ctx->contact = NULL;
                 }
 
-                /* close off base64 */
-                if (ctx->in_base64) {
-                    contact_base64(ctx, ctx->out, NULL, 1);
-                    ctx->in_base64 = 0;
-                }
-
-                /* write out mime end if needed */
-                if (ctx->in_mime) {
-                    apr_brigade_printf(ctx->out, NULL, NULL,
-                            CRLF "--%s--" CRLF CRLF, ctx->boundary);
-                    ctx->in_mime = 0;
-                }
-
-                if (ctx->in_form) {
-                    contact_form_close(f->r);
-                    ctx->in_form = 0;
-                }
-
-                APR_BRIGADE_CONCAT(ctx->out, ctx->in);
-                ctx->seen_eos = 1;
-                break;
-            }
-
-            if (APR_BUCKET_IS_FLUSH(e)) {
-                APR_BUCKET_REMOVE(e);
-                APR_BRIGADE_INSERT_TAIL(ctx->out, e);
-                break;
-            }
-
-            /*
-             * Multipart buckets represent the start of each form element,
-             * as well as the end of the previous form element.
-             */
-            if (AP_BUCKET_IS_MULTIPART(e)) {
-
-                ap_bucket_multipart *h = e->data;
-
-                /* stop ignoring data */
-                ctx->ignore = 0;
-
-                /* finish off any previous header */
-                if (ctx->in_header) {
-                    contact_bucket_set_header(ctx->contact, ctx->header,
-                            ctx->filtered);
-                    ctx->header = NULL;
-                    ctx->in_header = 0;
-                }
-
-                /* finish off any previous body */
-                if (ctx->state == CONTACT_BODY) {
-                    apr_bucket *b = apr_bucket_immortal_create(CRLF, 2,
-                            f->c->bucket_alloc);
-                    contact_base64(ctx, ctx->out, b, 0);
-                }
-
-                if (ctx->in_base64) {
-                    contact_base64(ctx, ctx->out, NULL, 1);
-                    ctx->in_base64 = 0;
-                }
-
-                if (ctx->in_form) {
-                    contact_form_close(f->r);
-                    ctx->in_form = 0;
-                }
-
-                if (strcasecmp(h->multipart->subtype, "form-data")) {
-                    /* not form-data - skip */
-                }
-
-                else if (!h->part->dsp_name || !h->part->dsp_name[0]) {
-                    /* name missing - skip */
-                }
-
-                /* the to address */
-                else if ((ctx->state == CONTACT_NONE ||
-                        ctx->state == CONTACT_HEADER)
-                        && h->part->dsp_name
-                        && !strcmp(h->part->dsp_name, "contact-header-to")) {
-                    ctx->header = "To";
-                    ctx->state = CONTACT_HEADER;
-                    ctx->in_form = 1;
-                }
-
-                /* the from address */
-                else if ((ctx->state == CONTACT_NONE ||
-                        ctx->state == CONTACT_HEADER)
-                        && h->part->dsp_name
-                        && !strcmp(h->part->dsp_name, "contact-header-from")) {
-                    ctx->header = "From";
-                    ctx->state = CONTACT_HEADER;
-                    ctx->in_form = 1;
-                }
-
-                /* the sender address */
-                else if ((ctx->state == CONTACT_NONE ||
-                        ctx->state == CONTACT_HEADER)
-                        && h->part->dsp_name
-                        && !strcmp(h->part->dsp_name, "contact-header-sender")) {
-                    ctx->header = "Sender";
-                    ctx->state = CONTACT_HEADER;
-                    ctx->in_form = 1;
-                }
-
-                /* the replyto address */
-                else if ((ctx->state == CONTACT_NONE ||
-                        ctx->state == CONTACT_HEADER)
-                        && h->part->dsp_name
-                        && !strcmp(h->part->dsp_name, "contact-header-replyto")) {
-                    ctx->header = "Reply-To";
-                    ctx->state = CONTACT_HEADER;
-                    ctx->in_form = 1;
-                }
-
-                /* the subject address */
-                else if ((ctx->state == CONTACT_NONE
-                        || ctx->state == CONTACT_HEADER)
-                        && h->part->dsp_name
-                        && !strcmp(h->part->dsp_name, "contact-header-subject")) {
-                    ctx->header = "Subject";
-                    ctx->state = CONTACT_HEADER;
-                    ctx->in_form = 1;
-                }
-
-                /* the body field */
-                else if ((ctx->state == CONTACT_NONE || ctx->state == CONTACT_HEADER
-                        || ctx->state == CONTACT_BODY)
-                        && h->part->dsp_name
-                        && !strncmp(h->part->dsp_name,
-                                "contact-body-", 13)) {
-
-                    apr_bucket *b;
-
-                    /* send contact bucket if unsent */
-                    if (ctx->contact) {
-                        APR_BRIGADE_INSERT_TAIL(ctx->out, ctx->contact);
-                        ctx->contact = NULL;
-                    }
-
-                    /* write out mime start */
-                    if (ctx->state == CONTACT_NONE
-                            || ctx->state == CONTACT_HEADER) {
-                        apr_brigade_printf(ctx->out, NULL, NULL,
-                                CRLF "--%s" CRLF, ctx->boundary);
-                        apr_brigade_puts(ctx->out, NULL, NULL,
-                                "Content-Type: text/plain; charset=\"UTF-8\"" CRLF);
-                        apr_brigade_puts(ctx->out, NULL, NULL,
-                                "Content-Transfer-Encoding: base64" CRLF CRLF);
-                        ctx->in_mime = 1;
-                    }
-
-                    /* write out body start */
-                    b = apr_bucket_heap_create(h->part->dsp_name + 13,
-                            strlen(h->part->dsp_name + 13), NULL, f->c->bucket_alloc);
-                    contact_base64(ctx, ctx->out, b, 0);
-                    b = apr_bucket_immortal_create(":" CRLF, 3,
-                            f->c->bucket_alloc);
-                    contact_base64(ctx, ctx->out, b, 0);
-
-                    ctx->in_base64 = 1;
-                    ctx->in_form = 1;
-                    ctx->state = CONTACT_BODY;
-                }
-
-                /* the attachment field */
-                else if ((ctx->state == CONTACT_NONE || ctx->state == CONTACT_HEADER
-                        || ctx->state == CONTACT_BODY
-                        || ctx->state == CONTACT_ATTACHMENT)
-                        && h->part->dsp_name
-                        && (!strncmp(h->part->dsp_name,
-                                "contact-attachment-", 19)
-                                || !strncmp(h->part->dsp_name,
-                                        "contact-inline-", 15))) {
-//                    ctx->dsp = h->part->dsp_name + 19;
-
-                    /* send contact bucket if unsent */
-                    if (ctx->contact) {
-                        APR_BRIGADE_INSERT_TAIL(ctx->out, ctx->contact);
-                        ctx->contact = NULL;
-                    }
-
-                    /* write out mime start */
+                /* write out mime start */
+                if (ctx->state == CONTACT_NONE
+                        || ctx->state == CONTACT_HEADER) {
                     apr_brigade_printf(ctx->out, NULL, NULL,
                             CRLF "--%s" CRLF, ctx->boundary);
-
-                    if (h->part->ct) {
-                        apr_brigade_puts(ctx->out, NULL, NULL, "Content-Type: ");
-                        apr_brigade_puts(ctx->out, NULL, NULL, h->part->ct);
-                        if (h->part->ct_boundary) {
-                            apr_brigade_printf(ctx->out, NULL, NULL,
-                                    "; boundary=\"%s\"", h->part->ct_boundary);
-                        }
-                        if (h->part->ct_charset) {
-                            apr_brigade_printf(ctx->out, NULL, NULL,
-                                    "; charset=\"%s\"", h->part->ct_charset);
-                        }
-                        apr_brigade_puts(ctx->out, NULL, NULL,
-                                CRLF);
-                    }
-
-                    if (h->part->dsp) {
-                        apr_brigade_puts(ctx->out, NULL, NULL, "Content-Disposition: ");
-                        if (h->part->dsp_name[8] == 'a' || h->part->dsp_name[8] == 'A') {
-                            apr_brigade_puts(ctx->out, NULL, NULL, "attachment");
-                        }
-                        else {
-                            apr_brigade_puts(ctx->out, NULL, NULL, "inline");
-                        }
-                        if (h->part->dsp_filename) {
-                            apr_brigade_printf(ctx->out, NULL, NULL,
-                                    "; filename=\"%s\"", h->part->dsp_filename);
-                        }
-                        if (h->part->dsp_create) {
-                            apr_brigade_printf(ctx->out, NULL, NULL,
-                                    "; creation-date=\"%s\"", h->part->dsp_create);
-                        }
-                        if (h->part->dsp_mod) {
-                            apr_brigade_printf(ctx->out, NULL, NULL,
-                                    "; modification-date=\"%s\"", h->part->dsp_mod);
-                        }
-                        if (h->part->dsp_read) {
-                            apr_brigade_printf(ctx->out, NULL, NULL,
-                                    "; read-date=\"%s\"", h->part->dsp_read);
-                        }
-                        if (h->part->dsp_size) {
-                            apr_brigade_printf(ctx->out, NULL, NULL,
-                                    "; size=\"%s\"", h->part->dsp_size);
-                        }
-                        apr_brigade_puts(ctx->out, NULL, NULL,
-                                CRLF);
-                    }
-
+                    apr_brigade_puts(ctx->out, NULL, NULL,
+                            "Content-Type: text/plain; charset=\"UTF-8\"" CRLF);
                     apr_brigade_puts(ctx->out, NULL, NULL,
                             "Content-Transfer-Encoding: base64" CRLF CRLF);
-
                     ctx->in_mime = 1;
-                    ctx->in_base64 = 1;
-                    ctx->state = CONTACT_ATTACHMENT;
                 }
 
-                else {
-                    // ignore multipart, and moan
+                /* write out body start */
+                b = apr_bucket_heap_create(h->part->dsp_name + 13,
+                        strlen(h->part->dsp_name + 13), NULL, f->c->bucket_alloc);
+                contact_base64(ctx, ctx->out, b, 0);
+                b = apr_bucket_immortal_create(":" CRLF, 3,
+                        f->c->bucket_alloc);
+                contact_base64(ctx, ctx->out, b, 0);
 
-                    ctx->ignore = 1;
+                ctx->in_base64 = 1;
+                ctx->in_form = 1;
+                ctx->state = CONTACT_BODY;
+            }
+
+            /* the attachment field */
+            else if ((ctx->state == CONTACT_NONE || ctx->state == CONTACT_HEADER
+                    || ctx->state == CONTACT_BODY
+                    || ctx->state == CONTACT_ATTACHMENT)
+                    && h->part->dsp_name
+                    && (!strncmp(h->part->dsp_name,
+                            "contact-attachment-", 19)
+                            || !strncmp(h->part->dsp_name,
+                                    "contact-inline-", 15))) {
+
+                /* send contact bucket if unsent */
+                if (ctx->contact) {
+                    APR_BRIGADE_INSERT_TAIL(ctx->out, ctx->contact);
+                    ctx->contact = NULL;
                 }
 
-                if (ctx->in_form) {
-                    contact_form_open(f->r, h->part->dsp_name);
-                }
+                /* write out mime start */
+                apr_brigade_printf(ctx->out, NULL, NULL,
+                        CRLF "--%s" CRLF, ctx->boundary);
 
-                apr_bucket_delete(e);
-                continue;
-            }
-
-            if (APR_BUCKET_IS_METADATA(e)) {
-                APR_BUCKET_REMOVE(e);
-                APR_BRIGADE_INSERT_TAIL(ctx->out, e);
-                continue;
-            }
-
-            if (ctx->ignore) {
-                APR_BUCKET_REMOVE(e);
-                apr_bucket_delete(e);
-                continue;
-            }
-
-            if (ctx->state == CONTACT_HEADER) {
-
-                /*
-                 * Chop our bucket up into single lines,
-                 * and send each line with our header.
-                 */
-
-                rv = apr_brigade_split_boundary(ctx->filtered, ctx->in, block,
-                        CRLF, 2, CONTACT_READ_BLOCKSIZE);
-
-                if (rv == APR_INCOMPLETE) {
-                    ctx->in_header = 1;
-
-                    if (ctx->in_form) {
-                        contact_form_brigade(f->r, ctx->filtered);
+                if (h->part->ct) {
+                    apr_brigade_puts(ctx->out, NULL, NULL, "Content-Type: ");
+                    apr_brigade_puts(ctx->out, NULL, NULL, h->part->ct);
+                    if (h->part->ct_boundary) {
+                        apr_brigade_printf(ctx->out, NULL, NULL,
+                                "; boundary=\"%s\"", h->part->ct_boundary);
                     }
-
-                    continue;
-                }
-                else if (rv == APR_SUCCESS) {
-
-                    if (ctx->in_form) {
-                        contact_form_brigade(f->r, ctx->filtered);
+                    if (h->part->ct_charset) {
+                        apr_brigade_printf(ctx->out, NULL, NULL,
+                                "; charset=\"%s\"", h->part->ct_charset);
                     }
-
-                    contact_bucket_set_header(ctx->contact, ctx->header,
-                            ctx->filtered);
-
-                    ctx->in_header = 0;
-                    continue;
-                }
-                else {
-                    return rv;
+                    apr_brigade_puts(ctx->out, NULL, NULL,
+                            CRLF);
                 }
 
+                if (h->part->dsp) {
+                    apr_brigade_puts(ctx->out, NULL, NULL, "Content-Disposition: ");
+                    if (h->part->dsp_name[8] == 'a' || h->part->dsp_name[8] == 'A') {
+                        apr_brigade_puts(ctx->out, NULL, NULL, "attachment");
+                    }
+                    else {
+                        apr_brigade_puts(ctx->out, NULL, NULL, "inline");
+                    }
+                    if (h->part->dsp_filename) {
+                        apr_brigade_printf(ctx->out, NULL, NULL,
+                                "; filename=\"%s\"", h->part->dsp_filename);
+                    }
+                    if (h->part->dsp_create) {
+                        apr_brigade_printf(ctx->out, NULL, NULL,
+                                "; creation-date=\"%s\"", h->part->dsp_create);
+                    }
+                    if (h->part->dsp_mod) {
+                        apr_brigade_printf(ctx->out, NULL, NULL,
+                                "; modification-date=\"%s\"", h->part->dsp_mod);
+                    }
+                    if (h->part->dsp_read) {
+                        apr_brigade_printf(ctx->out, NULL, NULL,
+                                "; read-date=\"%s\"", h->part->dsp_read);
+                    }
+                    if (h->part->dsp_size) {
+                        apr_brigade_printf(ctx->out, NULL, NULL,
+                                "; size=\"%s\"", h->part->dsp_size);
+                    }
+                    apr_brigade_puts(ctx->out, NULL, NULL,
+                            CRLF);
+                }
+
+                apr_brigade_puts(ctx->out, NULL, NULL,
+                        "Content-Transfer-Encoding: base64" CRLF CRLF);
+
+                ctx->in_mime = 1;
+                ctx->in_base64 = 1;
+                ctx->state = CONTACT_ATTACHMENT;
             }
 
-            if (ctx->state == CONTACT_BODY || ctx->state == CONTACT_ATTACHMENT) {
+            else {
+                // ignore multipart, and moan
 
-                /* we convert bodies and attachments to base64, do this here */
-                rv = apr_bucket_read(e, &str, &len, block);
-
-                if (rv != APR_SUCCESS) {
-                    return rv;
-                }
-
-                contact_base64(ctx, ctx->out, e, 0);
-
-                if (ctx->in_form) {
-                    contact_form_write(f->r, e);
-                }
-
-                continue;
+                ctx->ignore = 1;
             }
 
-            /* ordinary data, just pass it through */
+            if (ctx->in_form) {
+                contact_form_open(f->r, h->part->dsp_name);
+            }
+
+            apr_bucket_delete(e);
+            continue;
+        }
+
+        if (APR_BUCKET_IS_METADATA(e)) {
             APR_BUCKET_REMOVE(e);
             APR_BRIGADE_INSERT_TAIL(ctx->out, e);
+            continue;
+        }
+
+        if (ctx->ignore) {
+            APR_BUCKET_REMOVE(e);
+            apr_bucket_delete(e);
+            continue;
+        }
+
+        if (ctx->state == CONTACT_HEADER) {
+
+            /*
+             * Chop our bucket up into single lines,
+             * and send each line with our header.
+             */
+
+            rv = apr_brigade_split_boundary(ctx->filtered, ctx->in, block,
+                    CRLF, 2, CONTACT_READ_BLOCKSIZE);
+
+            if (rv == APR_INCOMPLETE) {
+                ctx->in_header = 1;
+
+                if (ctx->in_form) {
+                    contact_form_brigade(f->r, ctx->filtered);
+                }
+
+                continue;
+            }
+            else if (rv == APR_SUCCESS) {
+
+                if (ctx->in_form) {
+                    contact_form_brigade(f->r, ctx->filtered);
+                }
+
+                contact_bucket_set_header(ctx->contact, ctx->header,
+                        ctx->filtered);
+
+                ctx->in_header = 0;
+                continue;
+            }
+            else {
+                return rv;
+            }
 
         }
 
-//    } while (!ctx->seen_eos);
+        if (ctx->state == CONTACT_BODY || ctx->state == CONTACT_ATTACHMENT) {
+
+            /* we convert bodies and attachments to base64, do this here */
+            rv = apr_bucket_read(e, &str, &len, block);
+
+            if (rv != APR_SUCCESS) {
+                return rv;
+            }
+
+            contact_base64(ctx, ctx->out, e, 0);
+
+            if (ctx->in_form) {
+                contact_form_write(f->r, e);
+            }
+
+            continue;
+        }
+
+        /* ordinary data, just pass it through */
+        APR_BUCKET_REMOVE(e);
+        APR_BRIGADE_INSERT_TAIL(ctx->out, e);
+
+    }
 
     /* give the caller the data they asked for from the buffer */
     apr_brigade_partition(ctx->out, readbytes, &after);
