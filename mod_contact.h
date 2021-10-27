@@ -31,8 +31,8 @@
  * @{
  */
 
-#ifndef MOD_MULTIPART_H_
-#define MOD_MULTIPART_H_
+#ifndef MOD_CONTACT_H_
+#define MOD_CONTACT_H_
 
 
 #include <apr_buckets.h>
@@ -128,5 +128,5 @@ typedef struct ap_bucket_contact {
 }
 #endif
 
-#endif /* MOD_MULTIPART_H_ */
+#endif /* MOD_CONTACT_H_ */
 /** @} */
