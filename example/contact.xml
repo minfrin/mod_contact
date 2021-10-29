@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<?xml-stylesheet type="text/xsl" href="contact.xsl"?>
+<contact xmlns="https://github.com/minfrin/mod_contact">
+    <form>
+        <input name="contact-header-replyto">john@appleseed.example.com</input>
+        <input name="contact-header-subject">Hello!</input>
+        <input name="contact-body-name">John Appleseed</input>
+        <input name="contact-body-message">Hi everyone
+        </input>
+    </form>
+    <code>200</code>
+    <status>200 OK</status>
+    <message>Message accepted for delivery</message>
+</contact>
+
