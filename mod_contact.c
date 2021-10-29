@@ -1362,12 +1362,8 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
             if (ctx->state == CONTACT_BODY) {
                 apr_bucket *b = apr_bucket_immortal_create(CRLF, 2,
                         f->c->bucket_alloc);
+                APR_BRIGADE_INSERT_TAIL(ctx->filtered, b);
                 contact_base64(ctx, ctx->out, b, 0);
-            }
-
-            if (ctx->in_base64) {
-                contact_base64(ctx, ctx->out, NULL, 1);
-                ctx->in_base64 = 0;
             }
 
             if (ctx->in_form) {
@@ -1487,6 +1483,12 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                 if (ctx->contact) {
                     APR_BRIGADE_INSERT_TAIL(ctx->out, ctx->contact);
                     ctx->contact = NULL;
+                }
+
+            	/* in a body, or a previous attachment, close us off */
+                if (ctx->in_base64) {
+                    contact_base64(ctx, ctx->out, NULL, 1);
+                    ctx->in_base64 = 0;
                 }
 
                 /* ignore empty files */

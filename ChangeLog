@@ -1,4 +1,9 @@
 
+Changes with v1.0.1
+
+ *) Stop the base64 encoder from closing off the line early.
+    [Graham Leggett]
+
 Changes with v1.0.0
 
  *) Initial import of mod_contact. [Graham Leggett]
