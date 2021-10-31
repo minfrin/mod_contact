@@ -539,9 +539,9 @@ static void contact_form_write(request_rec *r, apr_bucket *e)
 
             apr_size_t elen;
 
-            if (APR_SUCCESS == apr_escape_entity(NULL, str, len, 1, &elen)) {
+            if (APR_SUCCESS == apr_escape_entity(NULL, str, len, 0, &elen)) {
                 char *buf = apr_palloc(r->pool, elen);
-                apr_escape_entity(buf, str, len, 1, &elen);
+                apr_escape_entity(buf, str, len, 0, &elen);
                 ap_rwrite(buf, elen, r);
             }
             else {

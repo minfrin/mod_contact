@@ -1,6 +1,9 @@
 
 Changes with v1.0.1
 
+ *) Limit entity encoding to XML entities only.
+    [Graham Leggett]
+
  *) contact_base64() consumes buckets. Don't try use buckets
     after being consumed. [Graham Leggett]
 
