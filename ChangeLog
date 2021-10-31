@@ -1,6 +1,8 @@
 
 Changes with v1.0.1
 
+ *) Add additional line between body elements. [Graham Leggett]
+
  *) Stop the base64 encoder from closing off the line early.
     [Graham Leggett]
 
