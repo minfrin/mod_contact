@@ -1,6 +1,9 @@
 
 Changes with v1.0.1
 
+ *) contact_base64() consumes buckets. Don't try use buckets
+    after being consumed. [Graham Leggett]
+
  *) Add additional line between body elements. [Graham Leggett]
 
  *) Stop the base64 encoder from closing off the line early.

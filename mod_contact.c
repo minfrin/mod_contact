@@ -1459,9 +1459,11 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                 /* write out body start */
                 b = apr_bucket_heap_create(h->part->dsp_name + 13,
                         strlen(h->part->dsp_name + 13), NULL, f->c->bucket_alloc);
+                APR_BRIGADE_INSERT_TAIL(ctx->filtered, b);
                 contact_base64(ctx, ctx->out, b, 0);
                 b = apr_bucket_immortal_create(":" CRLF, 3,
                         f->c->bucket_alloc);
+                APR_BRIGADE_INSERT_TAIL(ctx->filtered, b);
                 contact_base64(ctx, ctx->out, b, 0);
 
                 ctx->in_base64 = 1;
@@ -1629,11 +1631,11 @@ contact_in_filter(ap_filter_t * f, apr_bucket_brigade * bb,
                 return rv;
             }
 
-            contact_base64(ctx, ctx->out, e, 0);
-
             if (ctx->in_form) {
                 contact_form_write(f->r, e);
             }
+
+            contact_base64(ctx, ctx->out, e, 0);
 
             continue;
         }
