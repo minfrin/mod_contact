@@ -1,6 +1,8 @@
 # mod_contact
 An Apache httpd module that implements a contact us form with file upload.
 
+Acts as a gateway between a form submission and email.
+
 ## example
 For an example of how the module is deployed, see the examples directory.
 
