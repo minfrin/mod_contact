@@ -29,6 +29,9 @@ For an example of how the module is deployed, see the examples directory.
 RPMs for Fedora/Redhat derivatives are available through
 [COPR](https://copr.fedorainfracloud.org/coprs/minfrin/mod_contact/).
 
+Ubuntu packages are available through
+[PPA](https://launchpad.net/~minfrin/+archive/ubuntu/apache2/).
+
 ## directives
 **ContactStylesheet**
 : Set the XSLT stylesheet to be used when rendering the output.
